@@ -1,0 +1,768 @@
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import math
+import json
+import os
+import traceback
+import random  # Para generación de valores aleatorios
+import time    # Para generación de timestamps y control de animación
+
+# –– MODELO DE NODO Y CAMPO ––
+import random
+
+class Nodo:
+    def __init__(self, x, y, rho=1.0, color="lime"):
+        self.x = x
+        self.y = y
+        self.rho = rho
+        self.original_rho = rho
+        self.color = color
+        self.vx = random.uniform(-1, 1) * 0.5  # Velocidad inicial más lenta
+        self.vy = random.uniform(-1, 1) * 0.5
+        self.animation_phase = random.uniform(0, 6.28)  # Fase aleatoria para animación
+        self.canvas_id = None  # Para almacenar la referencia al objeto en el canvas
+
+class Campo:
+    def __init__(self, ancho=800, alto=600):
+        self.nodos = []
+        self.ancho = ancho
+        self.alto = alto
+        self.animacion_activa = True  # Iniciar activa por defecto
+        self.factor_velocidad = 1.0  # Factor de velocidad (1.0 = velocidad normal)
+        self._ultimo_tiempo = time.time()  # Para cálculo de delta time
+
+    def limpiar(self):
+        self.nodos.clear()
+
+    def inyectar_patron(self, coords, intensidad=1.0, color="lime"):
+        """
+        Inyecta un patrón en el campo.
+        
+        Args:
+            coords: Lista de tuplas (x, y) en píxeles
+            intensidad: Puede ser un valor único o una lista de valores para cada nodo
+            color: Puede ser un color único (str) o una lista de colores para cada nodo
+        """
+        self.limpiar()
+        
+        # Asegurarse de que intensidad y color sean listas
+        if not isinstance(intensidad, (list, tuple)):
+            intensidad = [intensidad] * len(coords)
+        if not isinstance(color, (list, tuple)):
+            color = [color] * len(coords)
+            
+        for (x, y), rho, col in zip(coords, intensidad, color):
+            self.nodos.append(Nodo(x, y, rho=rho, color=col))
+    
+    def actualizar_posiciones(self):
+        """Actualiza las posiciones de los nodos para la animación"""
+        if not self.animacion_activa:
+            return False
+            
+        tiempo_actual = time.time()
+        delta_time = min(0.1, tiempo_actual - self._ultimo_tiempo)  # Limitar delta_time
+        self._ultimo_tiempo = tiempo_actual
+        
+        # Aplicar el factor de velocidad (ajustado para 60 FPS)
+        velocidad_efectiva = self.factor_velocidad * delta_time * 60
+        
+        for nodo in self.nodos:
+            # Actualizar fase de animación
+            nodo.animation_phase += delta_time * 2
+            if nodo.animation_phase > 6.28:  # 2*pi
+                nodo.animation_phase -= 6.28
+            
+            # Mover nodo con la velocidad ajustada
+            nodo.x += nodo.vx * velocidad_efectiva
+            nodo.y += nodo.vy * velocidad_efectiva
+            
+            # Rebotar en los bordes con amortiguación
+            if nodo.x < 0:
+                nodo.x = 0
+                nodo.vx = abs(nodo.vx) * 0.95  # Pequeña pérdida de energía
+            elif nodo.x > self.ancho:
+                nodo.x = self.ancho
+                nodo.vx = -abs(nodo.vx) * 0.95
+                
+            if nodo.y < 0:
+                nodo.y = 0
+                nodo.vy = abs(nodo.vy) * 0.95
+            elif nodo.y > self.alto:
+                nodo.y = self.alto
+                nodo.vy = -abs(nodo.vy) * 0.95
+            
+            # Variar ligeramente el tamaño con animación suave
+            nodo.rho = nodo.original_rho * (1 + 0.1 * math.sin(nodo.animation_phase * 0.7))
+            
+        return True
+    
+    def exportar_json(self, nombre_archivo):
+        """Exporta los nodos actuales a un archivo JSON"""
+        datos = []
+        for nodo in self.nodos:
+            datos.append({
+                "x": int(nodo.x),
+                "y": int(nodo.y),
+                "rho": float(nodo.original_rho),
+                "color": nodo.color
+            })
+        
+        with open(nombre_archivo, 'w') as f:
+            json.dump(datos, f, indent=2)
+        
+        return len(datos)
+
+    def energia_total(self):
+        """Calcula la energía total del sistema como la suma de los valores rho de los nodos"""
+        return sum(n.original_rho for n in self.nodos)  # Usar original_rho en lugar de rho para consistencia
+
+    def entropia_espacial(self):
+        """Calcula la entropía espacial basada en la varianza de las distancias entre nodos"""
+        if len(self.nodos) < 2:
+            return 0.0
+            
+        # Calcular todas las distancias entre pares de nodos
+        distancias = []
+        for i in range(len(self.nodos)):
+            for j in range(i + 1, len(self.nodos)):
+                dx = self.nodos[i].x - self.nodos[j].x
+                dy = self.nodos[i].y - self.nodos[j].y
+                distancias.append(math.hypot(dx, dy))
+        
+        # Calcular varianza de las distancias
+        if not distancias:
+            return 0.0
+            
+        mean = sum(distancias) / len(distancias)
+        if len(distancias) > 1:
+            var = sum((d - mean) ** 2 for d in distancias) / (len(distancias) - 1)
+            return math.sqrt(var)  # Desviación estándar como medida de entropía
+        return 0.0
+
+# –– MOTOR N ––
+class MotorN:
+    def __init__(self, canvas, lbl_status, lbl_energy, lbl_entropy):
+        self.canvas = canvas
+        self.lbl_status = lbl_status
+        self.lbl_energy = lbl_energy
+        self.lbl_entropy = lbl_entropy
+        self.campo = Campo(int(canvas['width']), int(canvas['height']))
+        self.nodo_seleccionado = None
+        self._after_id = None
+        
+        # Configurar eventos del ratón
+        self.canvas.bind("<Button-1>", self.seleccionar_nodo)
+        self.canvas.bind("<B1-Motion>", self.mover_nodo)
+        self.canvas.bind("<ButtonRelease-1>", self.soltar_nodo)
+        
+        # Iniciar bucle de animación
+        self.iniciar_animacion()
+    
+    def iniciar_animacion(self):
+        """Inicia el bucle de animación"""
+        if not hasattr(self, '_after_id') or self._after_id is None:
+            self._bucle_animacion()
+    
+    def _bucle_animacion(self):
+        """Bucle principal de animación"""
+        if not self.canvas.winfo_viewable():
+            # Si la ventana no es visible, no actualizar
+            self._after_id = self.canvas.after(100, self._bucle_animacion)
+            return
+            
+        try:
+            if self.campo.animacion_activa:
+                self.campo.actualizar_posiciones()
+                self.dibujar()
+                
+                # Actualizar métricas solo una vez cada 5 frames para mejor rendimiento
+                if not hasattr(self, '_frame_count'):
+                    self._frame_count = 0
+                self._frame_count += 1
+                if self._frame_count >= 5:
+                    self.actualizar_metricas()
+                    self._frame_count = 0
+            
+            # Programar el siguiente frame (60 FPS objetivo)
+            self._after_id = self.canvas.after(16, self._bucle_animacion)
+            
+        except Exception as e:
+            print(f"Error en bucle de animación: {e}")
+            # Reintentar después de un error
+            self._after_id = self.canvas.after(100, self._bucle_animacion)
+    
+    def pausar_animacion(self, pausar=True):
+        """Pausa o reanuda la animación"""
+        self.campo.animacion_activa = not pausar
+    
+    def seleccionar_nodo(self, event):
+        """Selecciona un nodo al hacer clic"""
+        for nodo in self.campo.nodos:
+            r = nodo.rho * 10
+            dx = nodo.x - event.x
+            dy = nodo.y - event.y
+            if dx*dx + dy*dy <= r*r:
+                self.nodo_seleccionado = nodo
+                # Resaltar nodo seleccionado
+                self.canvas.create_oval(
+                    nodo.x-r-3, nodo.y-r-3,
+                    nodo.x+r+3, nodo.y+r+3,
+                    outline="white", width=2, dash=(3,3)
+                )
+                break
+    
+    def mover_nodo(self, event):
+        """Mueve el nodo seleccionado"""
+        if self.nodo_seleccionado:
+            self.nodo_seleccionado.x = event.x
+            self.nodo_seleccionado.y = event.y
+            self.dibujar()
+    
+    def soltar_nodo(self, event):
+        """Suelta el nodo seleccionado"""
+        self.nodo_seleccionado = None
+        self.dibujar()
+
+    def dibujar(self):
+        """Dibuja todos los nodos en el canvas"""
+        # Limpiar el canvas
+        self.canvas.delete("all")
+        
+        # Dibujar conexiones primero (detrás de los nodos)
+        self._dibujar_conexiones()
+        
+        # Dibujar nodos
+        for nodo in self.campo.nodos:
+            self._dibujar_nodo(nodo)
+    
+    def _dibujar_conexiones(self):
+        """Dibuja líneas entre nodos cercanos"""
+        for i, nodo1 in enumerate(self.campo.nodos):
+            for nodo2 in self.campo.nodos[i+1:]:
+                # Calcular distancia entre nodos
+                dx = nodo1.x - nodo2.x
+                dy = nodo1.y - nodo2.y
+                distancia = math.hypot(dx, dy)
+                
+                # Solo dibujar líneas para nodos cercanos
+                if distancia < 150:  # Rango de conexión
+                    # Calcular ancho basado en la distancia
+                    ancho = max(1, int(3 * (1 - distancia/150)))
+                    
+                    # Calcular opacidad (convertir a escala 0-255 a 0-1)
+                    opacidad = 1.0 - (distancia/200)
+                    if opacidad < 0.1:  # Umbral mínimo de opacidad
+                        continue
+                        
+                    # Ajustar el color base según la opacidad (simulación de transparencia)
+                    r = int(51 * opacidad)  # 51 = 0x33 (20% de 255)
+                    g = r
+                    b = r
+                    
+                    # Formato de color compatible con Tkinter (sin canal alpha)
+                    color = f'#{r:02x}{g:02x}{b:02x}'
+                    
+                    # Dibujar línea
+                    self.canvas.create_line(
+                        nodo1.x, nodo1.y,
+                        nodo2.x, nodo2.y,
+                        fill=color,
+                        width=ancho,
+                        tags=("conexion", f"conexion_{id(nodo1)}_{id(nodo2)}")
+                    )
+    
+    def _dibujar_nodo(self, nodo):
+        """Dibuja un nodo con efectos visuales"""
+        x, y = int(nodo.x), int(nodo.y)
+        r = int(nodo.rho * 5)  # Tamaño base del nodo
+        
+        # Efecto de pulso
+        pulse = 1 + 0.1 * math.sin(nodo.animation_phase)
+        r_halo = int(r * (1.2 + 0.1 * pulse))
+        
+        # Dibujar halo
+        self.canvas.create_oval(
+            x - r_halo, y - r_halo,
+            x + r_halo, y + r_halo,
+            fill="",
+            outline=nodo.color,
+            width=1 + 0.5 * abs(math.sin(nodo.animation_phase * 0.7))
+        )
+        
+        # Dibujar nodo principal
+        self.canvas.create_oval(
+            x - r, y - r,
+            x + r, y + r,
+            fill=nodo.color,
+            outline="white",
+            width=1
+        )
+        
+        # Mostrar valor de rho
+        if r > 8:  # Solo mostrar texto si el nodo es lo suficientemente grande
+            self.canvas.create_text(
+                x, y,
+                text=f"{nodo.original_rho:.1f}",
+                fill="white" if nodo.color in ["black", "blue", "purple", "navy"] else "black",
+                font=("Arial", max(6, r-2))
+            )
+    
+    def _actualizar_nodo_canvas(self, nodo):
+        """Método obsoleto, ya que ahora usamos dibujar() completo"""
+        pass
+
+    def actualizar_metricas(self):
+        # Actualizar etiquetas de energía y entropía
+        e = self.campo.energia_total()
+        s = self.campo.entropia_espacial()
+        
+        if self.lbl_energy:
+            self.lbl_energy.config(text=f"Energía: {e:.2f}")
+            
+        if self.lbl_entropy:
+            self.lbl_entropy.config(text=f"Entropía: {s:.2f}")
+            
+        # Actualizar estado de la animación
+        if len(self.campo.nodos) == 0:
+            estado = "Inactivo"
+            color = "gray"
+        elif self.campo.animacion_activa:
+            estado = "Ejecutando"
+            color = "lime"
+        else:
+            estado = "Pausado"
+            color = "yellow"
+            
+        if self.lbl_status:
+            self.lbl_status.config(text=f"Estado: {estado}", fg=color)
+            
+        # Actualizar título de la ventana con métricas
+        try:
+            root = self.canvas.winfo_toplevel()
+            if root and hasattr(root, 'title'):
+                root.title(f"Simulador - Nodos: {len(self.campo.nodos)} | Energía: {e:.1f} | Entropía: {s:.1f}")
+        except Exception:
+            # Si hay algún error al actualizar el título, lo ignoramos silenciosamente
+            pass
+
+    def ejecutar_inyeccion(self, coords, intensidad, color):
+        self.campo.inyectar_patron(coords, intensidad, color)
+        self.dibujar()
+        self.actualizar_metricas()
+    
+    def exportar_patron(self):
+        """
+        Exporta el patrón actual a un archivo JSON
+        
+        Returns:
+            bool: True si la exportación fue exitosa, False en caso contrario
+        """
+        if not self.campo.nodos:
+            messagebox.showwarning("Sin datos", "No hay nodos para exportar")
+            return False
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[
+                ("Archivos JSON", "*.json"),
+                ("Todos los archivos", "*.*")
+            ],
+            title="Guardar patrón como...",
+            initialfile=f"patron_{len(self.campo.nodos)}_nodos_{int(time.time())}.json"
+        )
+        
+        if not file_path:  # Usuario canceló
+            return False
+            
+        try:
+            # Preparar datos de los nodos
+            nodos_data = [{
+                "x": nodo.x,
+                "y": nodo.y,
+                "rho": nodo.rho,
+                "color": nodo.color
+            } for nodo in self.campo.nodos]
+            
+            # Escribir en el archivo con formato legible
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(nodos_data, f, indent=2, ensure_ascii=False)
+            
+            # Mostrar confirmación
+            return True
+            
+        except PermissionError:
+            messagebox.showerror("Error de permisos", 
+                              "No se pudo guardar el archivo. Verifica que tengas permisos de escritura.")
+        except Exception as e:
+            messagebox.showerror("Error al exportar", 
+                              f"No se pudo guardar el archivo:\n{str(e)}")
+        
+        return False
+
+# –– APLICACIÓN ––
+class App:
+    def __init__(self, root):
+        root.title("Informational Collapse Simulator")
+        root.geometry("800x600")
+        root.configure(bg="#1e1e1e")
+
+        # Configuración de grid principal
+        root.grid_rowconfigure(0, weight=1)
+        root.grid_columnconfigure(0, weight=3, minsize=500)
+        root.grid_columnconfigure(1, weight=1, minsize=250)
+
+        # — Panel lateral de controles y métricas —
+        panel = tk.Frame(root, bg="#2b2b2b")
+        panel.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        panel.grid_rowconfigure(1, weight=1)
+
+        # Crear primero las etiquetas
+        self.lbl_status = tk.Label(panel, text="Estado: –", fg="white", bg="#2b2b2b", font=("Consolas", 12))
+        self.lbl_status.grid(row=0, column=0, sticky="w", pady=(0,10))
+        self.lbl_energy = tk.Label(panel, text="Energía: –", fg="white", bg="#2b2b2b", font=("Consolas", 11))
+        self.lbl_energy.grid(row=1, column=0, sticky="w", pady=(0,5))
+        self.lbl_entropy = tk.Label(panel, text="Entropía: –", fg="white", bg="#2b2b2b", font=("Consolas", 11))
+        self.lbl_entropy.grid(row=2, column=0, sticky="w", pady=(0,20))
+
+        # — Canvas de visualización —
+        self.canvas = tk.Canvas(root, bg="black")
+        self.canvas.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        
+        # Inicializar el motor después de que todo lo demás esté listo
+        self.motor = MotorN(
+            canvas=self.canvas, 
+            lbl_status=self.lbl_status, 
+            lbl_energy=self.lbl_energy, 
+            lbl_entropy=self.lbl_entropy
+        )
+
+        # Controles de animación
+        frame_controles = ttk.LabelFrame(panel, text="Controles", padding=10)
+        frame_controles.grid(row=3, column=0, sticky="nsew", pady=(0, 10))
+        
+        # Botón de pausa/reanudar
+        self.btn_pausa = ttk.Button(
+            frame_controles, 
+            text="⏸ Pausar",
+            command=self.toggle_pausa
+        )
+        self.btn_pausa.grid(row=0, column=0, sticky="ew", padx=5)
+        
+        # Control de velocidad
+        ttk.Label(frame_controles, text="Velocidad:").grid(row=0, column=1, padx=5)
+        self.velocidad = tk.DoubleVar(value=1.0)
+        ttk.Scale(
+            frame_controles, 
+            from_=0.1, 
+            to=3.0, 
+            orient=tk.HORIZONTAL,
+            variable=self.velocidad,
+            command=self.actualizar_velocidad
+        ).grid(row=0, column=2, padx=5, sticky="ew")
+        
+        # Botones de acción
+        frame_botones = ttk.Frame(panel)
+        frame_botones.grid(row=4, column=0, sticky="nsew")
+        
+        btns = [
+            ("Cargar Patrón", self.on_load, "📂"),
+            ("Nuevo Nodo", self.agregar_nodo, "➕"),
+            ("Reset", self.on_reset, "🔄"),
+            ("Exportar", self.on_export, "💾"),
+            ("Crear Ejemplo", self.crear_archivo_ejemplo, "✨"),
+        ]
+        
+        for i, (txt, cmd, emoji) in enumerate(btns):
+            b = ttk.Button(
+                frame_botones, 
+                text=f"{emoji} {txt}",
+                command=cmd,
+                style="Accent.TButton" if txt == "Exportar" else ""
+            )
+            b.grid(row=0, column=i, padx=2, pady=5, sticky="nsew")
+            frame_botones.columnconfigure(i, weight=1)
+
+        # — Barra de estado inferior —
+        self.status_bar = ttk.Frame(root, height=25, style="Status.TFrame")
+        self.status_bar.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=0, pady=0)
+        
+        self.lbl_status_bar = ttk.Label(
+            self.status_bar, 
+            text="Listo | Nodos: 0 | Arrastra para crear conexiones",
+            anchor=tk.W,
+            style="Status.TLabel"
+        )
+        self.lbl_status_bar.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        
+        # Actualizar barra de estado cuando se mueve el ratón
+        self.canvas.bind("<Motion>", self.actualizar_status_bar)
+        self.canvas.bind("<Leave>", lambda e: self.actualizar_contador_nodos())
+        
+    def actualizar_status_bar(self, event):
+        """Actualiza la barra de estado con la posición del ratón"""
+        self.lbl_status_bar.config(
+            text=f"Posición: ({event.x}, {event.y}) | "
+                 f"Nodos: {len(self.motor.campo.nodos)} | "
+                 f"Arrastra para crear conexiones"
+        )
+    
+    def actualizar_contador_nodos(self):
+        """Actualiza solo el contador de nodos en la barra de estado"""
+        self.lbl_status_bar.config(
+            text=f"Listo | Nodos: {len(self.motor.campo.nodos)} | "
+                 f"Arrastra para crear conexiones"
+        )
+
+        # Instanciar motor
+        self.motor = MotorN(self.canvas, self.lbl_status, self.lbl_energy, self.lbl_entropy)
+        
+        # Configurar estilos
+        self.configurar_estilos()
+        
+        # Cargar un patrón de ejemplo al iniciar
+        self.cargar_patron_ejemplo()
+        
+        # Iniciar con la animación pausada
+        self.toggle_pausa()
+    
+    def toggle_pausa(self):
+        """Alterna entre pausar y reanudar la animación"""
+        # Cambiar el estado de la animación
+        self.motor.campo.animacion_activa = not self.motor.campo.animacion_activa
+        
+        # Actualizar el texto del botón
+        if self.motor.campo.animacion_activa:
+            self.btn_pausa.config(text="⏸ Pausar")
+            self.lbl_status.config(text="Estado: Ejecutando", fg="lime")
+            # Asegurarse de que la animación está corriendo
+            self.motor.iniciar_animacion()
+        else:
+            self.btn_pausa.config(text="▶ Reanudar")
+            self.lbl_status.config(text="Estado: Pausado", fg="yellow")
+    
+    def actualizar_velocidad(self, *args):
+        """Actualiza la velocidad de la animación"""
+        if hasattr(self, 'motor') and hasattr(self.motor, 'campo'):
+            # Actualizar el factor de velocidad en el campo
+            self.motor.campo.factor_velocidad = self.velocidad.get()
+            
+            # Actualizar la etiqueta de estado para mostrar la velocidad actual
+            velocidad_actual = round(self.velocidad.get(), 1)
+            self.lbl_status_bar.config(
+                text=f"Velocidad: {velocidad_actual}x | "
+                     f"Nodos: {len(self.motor.campo.nodos)}")
+    
+    def agregar_nodo(self):
+        """Añade un nuevo nodo en una posición aleatoria"""
+        x = random.randint(50, int(self.canvas['width']) - 50)
+        y = random.randint(50, int(self.canvas['height']) - 50)
+        color = random.choice(["cyan", "lime", "magenta", "yellow", "orange"])
+        rho = random.uniform(0.5, 1.5)
+        
+        self.motor.campo.nodos.append(Nodo(x, y, rho=rho, color=color))
+        self.motor.dibujar()
+        self.motor.actualizar_metricas()
+    
+    def on_export(self):
+        """Maneja la exportación del patrón actual"""
+        if not self.motor.campo.nodos:
+            messagebox.showwarning("Sin datos", "No hay nodos para exportar")
+            return
+            
+        if self.motor.exportar_patron():
+            self.lbl_status_bar.config(
+                text=f"Patrón exportado con éxito! | "
+                     f"Nodos: {len(self.motor.campo.nodos)}"
+            )
+    
+    def cargar_patron_ejemplo(self):
+        """Carga un patrón de ejemplo para demostración"""
+        patron_ejemplo = [
+            {"x": 150, "y": 150, "rho": 1.0, "color": "cyan"},
+            {"x": 250, "y": 200, "rho": 0.8, "color": "lime"},
+            {"x": 350, "y": 250, "rho": 1.2, "color": "magenta"},
+            {"x": 200, "y": 300, "rho": 0.9, "color": "yellow"},
+            {"x": 300, "y": 150, "rho": 1.1, "color": "orange"}
+        ]
+        
+        # Extraer coordenadas y propiedades
+        coords = [(n['x'], n['y']) for n in patron_ejemplo]
+        intensidades = [n['rho'] for n in patron_ejemplo]
+        colores = [n['color'] for n in patron_ejemplo]
+        
+        self.motor.ejecutar_inyeccion(coords, intensidades, colores)
+
+    def on_load(self):
+        """Maneja la carga de un archivo JSON con el patrón"""
+        try:
+            file_path = filedialog.askopenfilename(
+                title="Selecciona archivo de patrón JSON",
+                filetypes=[("Archivos JSON", "*.json"), ("Todos los archivos", "*.*")]
+            )
+            
+            if not file_path:  # Usuario canceló
+                return
+            
+            # Mostrar mensaje de carga
+            self.lbl_status.config(text=f"Cargando {os.path.basename(file_path)}...")
+            self.canvas.update_idletasks()  # Forzar actualización de la interfaz
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            if not isinstance(data, list):
+                raise ValueError("El archivo debe contener un arreglo de nodos")
+            
+            # Limpiar el campo actual
+            self.motor.campo.limpiar()
+            
+            # Procesar cada nodo del archivo
+            for i, nodo in enumerate(data, 1):
+                try:
+                    # Validar datos del nodo
+                    if not isinstance(nodo, dict):
+                        print(f"Advertencia: El nodo {i} no es un diccionario, omitiendo...")
+                        continue
+                        
+                    # Obtener valores con validación
+                    x = float(nodo.get('x', 0))
+                    y = float(nodo.get('y', 0))
+                    rho = float(nodo.get('rho', 1.0))
+                    color = str(nodo.get('color', 'lime'))
+                    
+                    # Asegurar que las coordenadas estén dentro de los límites
+                    x = max(0, min(x, float(self.canvas['width'])))
+                    y = max(0, min(y, float(self.canvas['height'])))
+                    
+                    # Crear y agregar el nodo
+                    self.motor.campo.nodos.append(Nodo(x, y, rho=rho, color=color))
+                    
+                except (ValueError, TypeError) as e:
+                    print(f"Advertencia: Error en nodo {i}: {e}, omitiendo...")
+                    continue
+            
+            if not self.motor.campo.nodos:
+                raise ValueError("No se pudo cargar ningún nodo válido del archivo")
+            
+            # Actualizar la visualización
+            self.motor.dibujar()
+            self.motor.actualizar_metricas()
+            self.actualizar_contador_nodos()
+            
+            # Mostrar mensaje de éxito
+            num_nodos = len(self.motor.campo.nodos)
+            nombre_archivo = os.path.basename(file_path)
+            self.lbl_status.config(text=f"Cargados {num_nodos} nodos desde {nombre_archivo}")
+            
+            # Hacer foco en el canvas para que responda a eventos del teclado
+            self.canvas.focus_set()
+            
+        except json.JSONDecodeError as e:
+            error_msg = f"Error en el formato JSON: {str(e)}"
+            messagebox.showerror("Error de formato", error_msg)
+            self.lbl_status.config(text=error_msg)
+        except Exception as e:
+            error_msg = f"Error al cargar el archivo: {str(e)}"
+            messagebox.showerror("Error", error_msg)
+            self.lbl_status.config(text=error_msg)
+            print(f"Error detallado: {traceback.format_exc()}")
+
+    def crear_archivo_ejemplo(self):
+        """Crea un archivo JSON de ejemplo en la misma carpeta"""
+        try:
+            # Datos de ejemplo
+            datos_ejemplo = [
+                {"x": 100, "y": 100, "rho": 1.0, "color": "cyan"},
+                {"x": 200, "y": 150, "rho": 1.2, "color": "magenta"},
+                {"x": 300, "y": 200, "rho": 0.8, "color": "lime"},
+                {"x": 400, "y": 250, "rho": 1.5, "color": "yellow"},
+                {"x": 500, "y": 300, "rho": 1.1, "color": "orange"}
+            ]
+            
+            # Nombre del archivo con timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            nombre_archivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                       f"ejemplo_patron_{timestamp}.json")
+            
+            # Guardar el archivo
+            with open(nombre_archivo, 'w', encoding='utf-8') as f:
+                json.dump(datos_ejemplo, f, indent=2, ensure_ascii=False)
+            
+            # Cargar automáticamente el archivo de ejemplo
+            self.motor.campo.limpiar()
+            for nodo in datos_ejemplo:
+                self.motor.campo.nodos.append(Nodo(
+                    nodo['x'], 
+                    nodo['y'], 
+                    rho=nodo['rho'], 
+                    color=nodo['color']
+                ))
+            
+            # Actualizar la interfaz
+            self.motor.dibujar()
+            self.motor.actualizar_metricas()
+            self.actualizar_contador_nodos()
+            
+            mensaje = f"Archivo de ejemplo creado y cargado: {os.path.basename(nombre_archivo)}"
+            self.lbl_status.config(text=mensaje)
+            messagebox.showinfo("Éxito", f"Se creó el archivo de ejemplo en:\n{nombre_archivo}")
+            
+        except Exception as e:
+            error_msg = f"Error al crear el archivo de ejemplo: {str(e)}"
+            messagebox.showerror("Error", error_msg)
+            self.lbl_status.config(text=error_msg)
+            print(f"Error detallado: {traceback.format_exc()}")
+    
+    def on_reset(self):
+        """Reinicia el campo a su estado inicial"""
+        self.motor.campo.limpiar()
+        self.motor.dibujar()
+        self.motor.actualizar_metricas()
+        self.lbl_status.config(text="Sistema reiniciado")
+        self.actualizar_contador_nodos()
+        
+        # Si la animación estaba pausada, asegurarse de que el botón muestre el estado correcto
+        if not self.motor.campo.animacion_activa:
+            self.btn_pausa.config(text="▶ Reanudar")
+
+    def configurar_estilos(self):
+        """Configura los estilos visuales de la aplicación"""
+        style = ttk.Style()
+        
+        # Estilo general
+        style.configure("TFrame", background="#2b2b2b")
+        style.configure("TLabel", background="#2b2b2b", foreground="white")
+        style.configure("TButton", padding=5)
+        style.configure("TEntry", padding=5)
+        style.configure("TCombobox", padding=5)
+        style.configure("TNotebook", background="#2b2b2b")
+        style.configure("TNotebook.Tab", background="#3b3b3b", foreground="white", padding=[10, 5])
+        style.map("TNotebook.Tab", 
+                background=[("selected", "#1e1e1e")],
+                foreground=[("selected", "white")])
+        
+        # Estilo para botones destacados
+        style.configure("Accent.TButton", 
+                      font=("Arial", 10, "bold"),
+                      foreground="white",
+                      background="#0078d7",
+                      padding=6)
+        
+        # Estilo para la barra de estado
+        style.configure("Status.TFrame", background="#1e1e1e")
+        style.configure("Status.TLabel", 
+                      background="#1e1e1e",
+                      foreground="#a0a0a0",
+                      font=("Consolas", 9))
+        
+        # Estilo para los contenedores
+        style.configure("TLabelFrame", background="#2b2b2b", foreground="white")
+        style.configure("TLabelFrame.Label", background="#2b2b2b", foreground="white")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    style = ttk.Style(root)
+    style.theme_use('clam')
+    App(root)
+    root.mainloop()

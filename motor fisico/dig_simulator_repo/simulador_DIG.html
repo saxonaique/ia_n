@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"/><title>Simulador DIG</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>body{font-family:system-ui;margin:18px}canvas{max-width:100%}</style></head><body>
+<h2>Simulador DIG — Curvas de Rotación</h2>
+<label>G_I: <input id="GI" value="500" type="number"></label>
+<label>M/L: <input id="ML" value="0.7" type="number"></label>
+<label>Rd: <input id="Rd" value="2.5" type="number"></label>
+<button id="run">Calcular</button>
+<canvas id="plot" width="800" height="320"></canvas>
+<script>
+const G=4.300e-6;
+function rho_star(r,L0,Rd,ML){const sigma0=L0/(2*Math.PI*Rd*Rd);return (ML*sigma0*Math.exp(-r/Rd))/(2*Rd);}
+function M_star_numeric(r,L0,Rd,ML){const dr=Math.min(0.01, r/200);let s=0;for(let x=dr;x<=r;x+=dr) s+=4*Math.PI*x*x*rho_star(x,L0,Rd,ML)*dr;return s;}
+function v_star(r,L0,Rd,ML){if(r<=0) return 0; const M=M_star_numeric(r,L0,Rd,ML); return Math.sqrt(G*M/r);}
+function v_info_DIG(r,GI,L0,Rd,ML){const Mb=M_star_numeric(r,L0,Rd,ML); if(Mb<=0) return 0; return Math.sqrt(G*Mb/(GI*r));}
+function v_MOND(r,L0,Rd,ML,a0){const vs=v_star(r,L0,Rd,ML); const aN=(vs*vs)/r; const a=Math.sqrt(aN*a0); return Math.sqrt(a*r);}
+function v_NFW(r,rho_s,r_s){if(r<=0) return 0; const x=r/r_s; const f=Math.log(1+x)-x/(1+x); const M=4*Math.PI*rho_s*r_s*r_s*f; return Math.sqrt(G*M/r);}
+document.getElementById('run').onclick=function(){
+ const GI=+document.getElementById('GI').value, ML=+document.getElementById('ML').value, Rd=+document.getElementById('Rd').value;
+ const L0=7.55e7, a0=1.2e-10, rho_s=0.03, r_s=5.0;
+ const rmax=12, dr=0.2; let r=[], vdig=[], vmon=[], vnfw=[], vstar=[];
+ for(let R=dr;R<=rmax;R+=dr){r.push(+R.toFixed(3)); const vs=v_star(R,L0,Rd,ML); vstar.push(+vs.toFixed(3)); vdig.push(+Math.sqrt(vs*vs+v_info_DIG(R,GI,L0,Rd,ML)**2).toFixed(3)); vmon.push(+v_MOND(R,L0,Rd,ML,a0).toFixed(3)); vnfw.push(+v_NFW(R,rho_s,r_s).toFixed(3));}
+ const ctx=document.getElementById('plot').getContext('2d');
+ if(window._chart) window._chart.destroy();
+ window._chart=new Chart(ctx,{type:'line',data:{labels:r,datasets:[{label:'v_star',data:vstar,borderColor:'#666'},{label:'DIG',data:vdig,borderColor:'#0b8043'},{label:'MOND',data:vmon,borderColor:'#1e88e5'},{label:'NFW',data:vnfw,borderColor:'#e53935'}]},options:{responsive:true}});
+};
+</script></body></html>

@@ -1,0 +1,7 @@
+# Core Dependencies
+numpy>=1.21.0
+scipy>=1.7.0  # For advanced numerical operations and filtering
+matplotlib>=3.4.0  # For visualization
+
+# Optional Dependencies
+# soundfile>=0.10.3  # Required only if using audio input features

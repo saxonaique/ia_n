@@ -101,7 +101,7 @@ class MotorNApp:
         self.graph_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         
         # Crear figura de matplotlib
-        self.fig = Figure(figsize=(6, 4), dpi=100)
+        self.fig = Figure(figsize=(6, 6), dpi=100)
         self.ax1 = self.fig.add_subplot(211)  # Gráfico de entropía
         self.ax2 = self.fig.add_subplot(212)  # Gráfico de varianza
         
@@ -430,17 +430,23 @@ class MotorNApp:
         self.log_mensaje(f"Inyección en ({x}, {y})")
 
     def pintar_lapiz(self, event):
-        # Convertir coordenadas del canvas a la rejilla del motor
-        x = max(0, min(int(event.x * self.motor.dim / self.canvas_size), self.motor.dim - 1))
-        y = max(0, min(int(event.y * self.motor.dim / self.canvas_size), self.motor.dim - 1))
-        
-        # Asegurarse de que las coordenadas estén dentro de los límites
-        if 0 <= x < self.motor.dim and 0 <= y < self.motor.dim:
-            self.motor.inyectar(x, y, intensidad=1.0)
-            self.actualizar_vista()
-            self.log_mensaje(f"Pintado en ({x}, {y})")
-        else:
-            self.log_mensaje(f"Fuera de límites: ({x}, {y})")
+        try:
+            # Convertir coordenadas del canvas a la rejilla del motor
+            x = event.x * self.motor.dim / self.canvas_size
+            y = event.y * self.motor.dim / self.canvas_size
+            
+            # Usar el método inyectar del motor que ya maneja los límites
+            if hasattr(self.motor, 'inyectar'):
+                if self.motor.inyectar(x, y, intensidad=1.0):
+                    self.actualizar_vista()
+                    self.log_mensaje(f"Pintado en ({int(round(x))}, {int(round(y))})")
+                else:
+                    self.log_mensaje(f"Fuera de límites: ({int(round(x))}, {int(round(y))})")
+            else:
+                self.log_mensaje("Error: El motor no tiene método inyectar")
+                
+        except Exception as e:
+            self.log_mensaje(f"Error al pintar: {str(e)}")
         
     def toggle_animacion(self):
         self.animando = not self.animando
@@ -473,9 +479,12 @@ class MotorNApp:
                     valor = campo[y, x]
                     
                     # Mapear a color (verde más suave con intensidad reducida)
-                    if valor > 0.01:  # Umbral mínimo para mostrar
+                    # Usar np.any() para manejar arrays de NumPy
+                    if np.any(valor > 0.01):  # Umbral mínimo para mostrar
+                        # Asegurarse de que tenemos un valor escalar
+                        valor_escalar = valor if np.isscalar(valor) else valor[0] if valor.size > 0 else 0
                         # Reducir la intensidad general y el contraste
-                        intensidad = int(180 * min(1.0, valor * 1.2))  # Menor contraste
+                        intensidad = int(180 * min(1.0, valor_escalar * 1.2))  # Menor contraste
                         # Usar un verde más oscuro y menos saturado
                         color = f'#{intensidad//2:02x}cc{intensidad//2:02x}'
                         
@@ -489,7 +498,8 @@ class MotorNApp:
                         centro_y = y1 + cell_size // 2
                         
                         # Dibujar un círculo con borde más sutil
-                        borde = 'gray' if valor > 0.5 else 'darkgray'  # Borde más suave
+                        # Usar valor_escalar para la comparación
+                        borde = 'gray' if valor_escalar > 0.5 else 'darkgray'  # Borde más suave
                         draw.ellipse([centro_x - radio, centro_y - radio, 
                                      centro_x + radio, centro_y + radio], 
                                    fill=color, outline=borde, width=1)

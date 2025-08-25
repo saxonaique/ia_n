@@ -1,4 +1,0 @@
-numpy
-pillow
-tk
-scipy

@@ -1,0 +1,1 @@
+# DIG Simulator\n\nUse simulador_DIG.html for interactive tests. See fit_DIG.py for batch fits.
