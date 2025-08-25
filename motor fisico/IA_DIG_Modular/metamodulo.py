@@ -63,9 +63,10 @@ class Metamodulo:
                 'entropy_window': 3,
                 'equilibrium_threshold': 0.05,
                 'max_history': 10,
-                'reorganization_iterations': 10, # <-- NUEVO: Número de pasos internos de reorganización
-                'reorganization_alpha': 0.1, # <-- NUEVO: Tasa de influencia de vecinos
-                'reorganization_noise_factor': 0.05 # <-- NUEVO: Pequeño ruido para evitar estancamiento
+                'reorganization_iterations': 15, # <-- NUEVO
+                'reorganization_alpha': 0.15, # <-- NUEVO
+                'reorganization_noise_factor': 0.03, # <-- NUEVO
+                'reorganization_stability_threshold': 0.1 # <-- NUEVO
             },
             'memory_module': {
                 'similarity_threshold': 0.85,
@@ -144,175 +145,81 @@ class Metamodulo:
                 self._log("Metamodulo: Entropía alta. Preparando intervención.")
 
                 # 3. Memoria & Procesador Evolutivo: Encontrar y aplicar atractores
-                similar_attractors = self.memoria.find_similar(current_field, top_k=3)
-                best_field = None
-                best_entropy = float('inf')
+                similar_attractor, similarity_score = self.memoria.find_similar(current_field)
                 
-                # Probar hasta 3 atractores similares
-                for i, (attractor, similarity_score) in enumerate(similar_attractors):
-                    if attractor.shape != current_field.shape:
-                        continue
-                        
-                    self._log(f"Memoria: Probando atractor similar {i+1} (score: {similarity_score:.2f})")
-                    
-                    # Reorganizar el campo con este atractor
-                    temp_field = self.core_nucleus.reorganize_field(attractor)
-                    
-                    # Calcular entropía del resultado
-                    self.core_nucleus.receive_field(temp_field)
-                    temp_entropy, _ = self.core_nucleus.compute_entropy()
-                    
-                    # Actualizar el mejor campo encontrado
-                    if temp_entropy < best_entropy:
-                        best_field = temp_field
-                        best_entropy = temp_entropy
-                        best_attractor = attractor
-                        best_similarity = similarity_score
-                
-                # Si encontramos un buen atractor, usarlo
-                if best_field is not None and best_entropy < global_entropy * 0.9:  # Al menos 10% de mejora
-                    self._log(f"Memoria: Usando mejor atractor (score: {best_similarity:.2f}, entropía: {best_entropy:.3f} < {global_entropy:.3f})")
-                    cycle_summary['applied_attractors'].append(f'Atractor Similar (Δ={global_entropy-best_entropy:.3f})')
-                    reorganized_field = best_field
-                    
-                    # Añadir al historial de atractores exitosos
-                    self.memoria.update_attractor_usage(best_attractor, success=True)
+                if similar_attractor is not None and similar_attractor.shape == current_field.shape and similarity_score >= self.config['memory_module']['similarity_threshold']:
+                    self._log(f"Memoria: Atractor similar encontrado (score: {similarity_score:.2f}). Guiando reorganización.")
+                    cycle_summary['applied_attractors'].append('Atractor Similar')
+                    reorganized_field = self.core_nucleus.reorganize_field(similar_attractor)
                 else:
-                    # Si no hay atractores útiles, intentar evolución
                     self._log("Memoria: Sin atractores útiles. Iniciando proceso evolutivo...")
+                    self.evolution_processor.receive_field(current_field)
+                    evolved_field = self.evolution_processor.evolve() 
                     
-                    # Usar el mejor atractor encontrado como punto de partida si existe
-                    initial_field = best_field if best_field is not None else current_field
+                    self.core_nucleus.receive_field(evolved_field)
+                    evolved_entropy, _ = self.core_nucleus.compute_entropy()
                     
-                    # Configurar el procesador evolutivo
-                    self.evolution_processor.receive_field(initial_field)
-                    
-                    # Realizar múltiples pasos de evolución
-                    evolved_field = initial_field
-                    evolution_steps = 3
-                    
-                    for step in range(evolution_steps):
-                        evolved_field = self.evolution_processor.evolve()
-                        
-                        # Calcular entropía del resultado
-                        self.core_nucleus.receive_field(evolved_field)
-                        evolved_entropy, _ = self.core_nucleus.compute_entropy()
-                        
-                        # Si la evolución es exitosa, salir antes
-                        if evolved_entropy < global_entropy * 0.95:  # Al menos 5% de mejora
-                            break
-                    
-                    # Si la evolución mejoró la entropía, guardar como nuevo atractor
-                    if evolved_entropy < global_entropy * 0.98:  # Al menos 2% de mejora
-                        attractor_id = self.memoria.store_attractor(
-                            evolved_field, 
-                            metadata={
-                                'source': 'evolution', 
-                                'initial_entropy': global_entropy, 
-                                'final_entropy': evolved_entropy,
-                                'parent_attractors': [id for id, _ in similar_attractors[:2]] if similar_attractors else []
-                            }
-                        )
-                        self._log(f"Procesador Evolutivo: Nuevo atractor almacenado (ID: {attractor_id}). Entropía: {evolved_entropy:.3f} < {global_entropy:.3f}")
-                        cycle_summary['applied_attractors'].append(f'Evolucionado (Δ={global_entropy-evolved_entropy:.3f})')
+                    if evolved_entropy < global_entropy:
+                        attractor_id = self.memoria.store_attractor(evolved_field, metadata={'source': 'evolution', 'initial_entropy': global_entropy, 'final_entropy': evolved_entropy})
+                        self._log(f"Procesador Evolutivo: Nuevo atractor almacenado (ID: {attractor_id}).")
+                        cycle_summary['applied_attractors'].append('Evolucionado y Almacenado')
                         reorganized_field = evolved_field
                     else:
-                        # Si la evolución no ayuda, usar reorganización local con influencia de memoria
                         self._log("Procesador Evolutivo: Evolución no efectiva. Usando reorganización local con influencia de memoria.")
-                        
-                        # Crear un campo de influencia combinando los mejores atractores
-                        memory_influence = None
-                        if similar_attractors:
-                            memory_influence = np.zeros_like(current_field, dtype=float)
-                            total_weight = 0.0
-                            
-                            for attractor, score in similar_attractors[:2]:  # Usar hasta 2 mejores
-                                if score > 0.7:  # Solo si la similitud es significativa
-                                    weight = score ** 2  # Ponderar más los más similares
-                                    memory_influence += attractor.astype(float) * weight
-                                    total_weight += weight
-                            
-                            if total_weight > 0:
-                                memory_influence /= total_weight
-                            else:
-                                memory_influence = None
-                        
-                        reorganized_field = self.core_nucleus.reorganize_field(memory_reference=memory_influence)
-                        cycle_summary['applied_attractors'].append('Reorganización Local con Memoria')
+                        reorganized_field = self.core_nucleus.reorganize_field()
+                        cycle_summary['applied_attractors'].append('Reorganización Local con Memoria') # Etiquetar la acción
 
-                final_field = reorganized_field # final_field es el resultado de la reorganización
+                final_field = reorganized_field
 
-            # --- Análisis detallado de métricas ---
-            # Asegurar que el núcleo tenga el campo final para los cálculos
+            # --- Recopilar métricas e interpretación después de la decisión ---
             self.core_nucleus.receive_field(final_field)
+            final_entropy, _ = self.core_nucleus.compute_entropy()
+            final_variance = getattr(self.core_nucleus, 'get_variance', lambda: 0.0)() 
+            final_maximo = getattr(self.core_nucleus, 'get_max_value', lambda: 0.0)() 
+            entropy_change_pct = (final_entropy - global_entropy) / global_entropy * 100 if global_entropy != 0 else 0.0
             
-            # Calcular métricas básicas
-            final_entropy, entropy_map = self.core_nucleus.compute_entropy()
-            final_variance = np.var(final_field) if final_field is not None else 0.0
-            final_max = np.max(np.abs(final_field)) if final_field is not None else 0.0
-            
-            # Calcular métricas adicionales
-            active_cells = np.sum(final_field == 1) if final_field is not None else 0
-            inhibited_cells = np.sum(final_field == -1) if final_field is not None else 0
-            neutral_cells = np.sum(final_field == 0) if final_field is not None else 0
-            total_cells = active_cells + inhibited_cells + neutral_cells
-            
-            # Calcular gradiente de entropía para detectar bordes y patrones
-            entropy_gradient = np.mean(np.abs(np.gradient(entropy_map))) if entropy_map is not None else 0.0
-            
-            # Calcular cambio porcentual en la entropía
-            entropy_change = 0.0
-            if 'initial_entropy' in cycle_summary and cycle_summary['initial_entropy'] is not None:
-                initial_entropy = cycle_summary['initial_entropy']
-                if initial_entropy > 0:
-                    entropy_change = ((final_entropy - initial_entropy) / initial_entropy) * 100.0
-            
-            # Calcular simetría del patrón
-            symmetry_score = 0.0
-            if final_field is not None:
-                # Calcular simetría horizontal y vertical
-                h_symmetry = np.mean(np.abs(final_field - np.fliplr(final_field))) / 2.0
-                v_symmetry = np.mean(np.abs(final_field - np.flipud(final_field))) / 2.0
-                symmetry_score = 1.0 - ((h_symmetry + v_symmetry) / 2.0)
-            
-            # Compilar métricas detalladas
-            reorganized_metrics = {
-                # Métricas básicas
-                'entropía': float(final_entropy),
-                'varianza': float(final_variance),
-                'máximo': float(final_max),
-                'entropy_change_pct': float(entropy_change),
-                'entropy_gradient': float(entropy_gradient),
-                'symmetry': float(symmetry_score),
-                
-                # Distribución de estados
-                'active_cells': int(active_cells),
-                'inhibited_cells': int(inhibited_cells),
-                'neutral_cells': int(neutral_cells),
-                'active_ratio': float(active_cells / total_cells) if total_cells > 0 else 0.0,
-                'inhibited_ratio': float(inhibited_cells / total_cells) if total_cells > 0 else 0.0,
-                'neutral_ratio': float(neutral_cells / total_cells) if total_cells > 0 else 0.0,
-                
-                # Historial de decisiones
-                'decision': cycle_summary.get('metamodule_decision', 'unknown'),
-                'applied_attractors': cycle_summary.get('applied_attractors', [])
+            # Contar celdas activas, inhibidas y neutras
+            active_cells = np.sum(final_field == 1)
+            inhibited_cells = np.sum(final_field == -1)
+            neutral_cells = np.sum(final_field == 0)
+            total_cells = final_field.size
+
+            active_ratio = active_cells / total_cells
+            inhibited_ratio = inhibited_cells / total_cells
+            neutral_ratio = neutral_cells / total_cells
+
+            symmetry = np.mean(final_field == np.fliplr(final_field)) 
+
+
+            reorganized_metrics = { 
+                'entropía': final_entropy,
+                'varianza': final_variance,
+                'máximo': final_maximo,
+                'entropy_change_pct': entropy_change_pct, 
+                'entropy_gradient': np.mean(self.core_nucleus.get_entropy_gradient()), 
+                'symmetry': symmetry,
+                'active_cells': active_cells,
+                'inhibited_cells': inhibited_cells,
+                'neutral_cells': neutral_cells,
+                'active_ratio': active_ratio,
+                'inhibited_ratio': inhibited_ratio,
+                'neutral_ratio': neutral_ratio,
+                'decision': cycle_summary['metamodule_decision'], 
+                'applied_attractors': cycle_summary['applied_attractors'] 
             }
-            
-            # Almacenar métricas en el resumen del ciclo
-            cycle_summary['reorganized_field_metrics'] = reorganized_metrics
-            
-            # Registrar métricas clave
-            self._log(
-                f"Núcleo: Entropía final: {final_entropy:.3f} "
-                f"(Δ{entropy_change:+.1f}%), "
-                f"Varianza: {final_variance:.3f}, "
+            cycle_summary['reorganized_field_metrics'] = reorganized_metrics 
+
+            log_message_metrics = (
+                f"Entropía final: {reorganized_metrics.get('entropía'):.3f} (Δ{reorganized_metrics.get('entropy_change_pct'):.1f}%), "
+                f"Varianza: {reorganized_metrics.get('varianza'):.3f}, "
                 f"Patrón: {active_cells}A/{inhibited_cells}I/{neutral_cells}N"
             )
-            
-            # Interpretar el estado usando el intérprete de IA
+            self._log(f"Núcleo: {log_message_metrics}")
+
             interpretacion_ia = interpretar_metrica(reorganized_metrics)
-            cycle_summary['ia_interpretation'] = interpretacion_ia
+            cycle_summary['ia_interpretation'] = interpretacion_ia 
             self._log(f"Interpretación IA: {interpretacion_ia}")
+            # --- FIN ACTUALIZACIÓN ---
 
 
             # 5. Módulo de Acción: Generar salida
@@ -381,4 +288,3 @@ if __name__ == "__main__":
     metamodulo_instance.run_dig_system(input_sources=example_inputs, max_cycles=5) 
     
     print("\nEjecución del Metamodulo principal finalizada.")
-

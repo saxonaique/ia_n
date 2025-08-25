@@ -1,125 +1,92 @@
-"""
-Módulo de interpretación de métricas para el sistema DIG.
+# ia_interpreter.py
 
-Este módulo analiza las métricas del campo informacional y proporciona
-interpretaciones cualitativas del estado del sistema.
-"""
+from typing import Dict, Any
+import numpy as np # Necesario para np.float64
 
-from typing import Dict, Any, Tuple
-import numpy as np
-
-def _evaluate_entropy_pattern(entropy: float, entropy_change: float) -> Tuple[str, str]:
-    """Evalúa el patrón de entropía y su tendencia."""
-    # Evaluar nivel de entropía
-    if entropy > 0.1:
-        level = "muy alta"
-        implication = "El sistema muestra alta complejidad y desorden"
-    elif entropy > 0.05:
-        level = "alta"
-        implication = "El sistema está en un estado de transición o cambio"
-    elif entropy > 0.02:
-        level = "moderada"
-        implication = "El sistema muestra actividad equilibrada"
-    elif entropy > 0.005:
-        level = "baja"
-        implication = "El sistema está en un estado ordenado"
-    else:
-        level = "muy baja"
-        implication = "El sistema está en un estado muy ordenado o estancado"
-    
-    # Evaluar tendencia
-    if abs(entropy_change) < 1.0:
-        trend = "estable"
-    elif entropy_change > 0:
-        trend = f"aumentando (+{entropy_change:.1f}%)"
-    else:
-        trend = f"disminuyendo ({entropy_change:+.1f}%)"
-    
-    return level, trend, implication
-
-def _evaluate_pattern_distribution(metrics: Dict[str, Any]) -> str:
-    """Evalúa la distribución de patrones en el campo."""
-    total = metrics.get('active_cells', 0) + metrics.get('inhibited_cells', 0) + metrics.get('neutral_cells', 0)
-    if total == 0:
-        return "Sin actividad detectable"
-    
-    active_ratio = metrics.get('active_ratio', 0)
-    inhibited_ratio = metrics.get('inhibited_ratio', 0)
-    neutral_ratio = metrics.get('neutral_ratio', 0)
-    
-    if neutral_ratio > 0.8:
-        return "Mayoría de celdas inactivas"
-    
-    patterns = []
-    if active_ratio > 0.3:
-        patterns.append(f"{active_ratio*100:.0f}% activas")
-    if inhibited_ratio > 0.3:
-        patterns.append(f"{inhibited_ratio*100:.0f}% inhibidas")
-    
-    if not patterns:
-        return "Patrón mixto equilibrado"
-    
-    return " y ".join(patterns)
-
-def _evaluate_symmetry(symmetry_score: float) -> str:
-    """Evalúa el nivel de simetría del patrón."""
-    if symmetry_score > 0.9:
-        return "Simetría casi perfecta"
-    elif symmetry_score > 0.7:
-        return "Alta simetría"
-    elif symmetry_score > 0.5:
-        return "Simetría moderada"
-    elif symmetry_score > 0.3:
-        return "Baja simetría"
-    return "Patrón asimétrico"
-
-def interpretar_metrica(metrics: Dict[str, Any]) -> str:
+def interpretar_metrica(m: Dict[str, Any]) -> str:
     """
-    Interpreta las métricas del campo informacional para proporcionar un análisis cualitativo.
-    
-    Args:
-        metrics: Diccionario con las métricas del campo informacional
-        
-    Returns:
-        str: Análisis cualitativo del estado del sistema
+    Interpreta las métricas extendidas del campo informacional para dar un estado cualitativo.
     """
-    # Obtener métricas con valores por defecto seguros
-    entropy = metrics.get("entropía", 0.0)
-    entropy_change = metrics.get("entropy_change_pct", 0.0)
-    variance = metrics.get("varianza", 0.0)
-    symmetry = metrics.get("symmetry", 0.0)
+    # Usar .get() con un valor por defecto para evitar KeyErrors y manejar None
+    e = float(m.get("entropía", 0.0)) # Asegurarse de que sea float
+    v = float(m.get("varianza", 0.0)) # Asegurarse de que sea float
+    mx = float(m.get("máximo", 0.0)) # Asegurarse de que sea float
     
-    # Validar métricas
-    if not all(isinstance(x, (int, float)) for x in [entropy, entropy_change, variance, symmetry]):
-        return "Error: Datos de métricas incompletos o no numéricos."
+    # Manejar los tipos numpy.float64 y numpy.int64
+    entropy_change_pct = float(m.get("entropy_change_pct", 0.0))
+    symmetry = float(m.get("symmetry", 0.0))
+    active_cells = int(m.get("active_cells", 0))
+    inhibited_cells = int(m.get("inhibited_cells", 0))
+    neutral_cells = int(m.get("neutral_cells", 0))
     
-    # Evaluar componentes individuales
-    entropy_level, entropy_trend, entropy_implication = _evaluate_entropy_pattern(entropy, entropy_change)
-    pattern_dist = _evaluate_pattern_distribution(metrics)
-    symmetry_desc = _evaluate_symmetry(symmetry)
+    total_cells = active_cells + inhibited_cells + neutral_cells 
+    if total_cells == 0: total_cells = 1 # Evitar división por cero
+
+    decision_context = m.get("decision", "Desconocida")
+    applied_attractors_context = ", ".join(m.get("applied_attractors", ["Ninguno"]))
+
+    # Asegurarse de que las métricas son numéricas (excepto los contextos que son strings)
+    if not all(isinstance(x, (int, float)) for x in [e, v, mx, entropy_change_pct, symmetry, active_cells, inhibited_cells, neutral_cells]):
+        return "IA: Datos de métricas incompletos o no numéricos para una interpretación profunda."
+
+    interpretacion = []
+
+    # 1. Interpretación de la Entropía y su Cambio
+    interpretacion.append(f"- Entropía: {e:.4f}")
+    if entropy_change_pct < -5.0: # Umbral más realista para "disminución significativa"
+        interpretacion.append(f"- Disminución significativa de entropía ({entropy_change_pct:.1f}%)")
+        interpretacion.append("- El sistema se está ordenando o equilibrando.")
+    elif entropy_change_pct > 5.0: # Umbral más realista para "aumento significativo"
+        interpretacion.append(f"- Aumento significativo de entropía (+{entropy_change_pct:.1f}%)")
+        interpretacion.append("- El sistema está ganando complejidad, explorando o desordenándose.")
+    elif e < 0.1 and abs(entropy_change_pct) < 1.0: # Si la entropía es baja y estable
+        interpretacion.append(f"- Entropía muy baja ({e:.4f}), con poco cambio.")
+        interpretacion.append("- El sistema está en un estado muy ordenado o estancado (equilibrio pasivo).")
+    else:
+        interpretacion.append("- Entropía moderada, cambio estable.")
+        interpretacion.append("- El sistema busca equilibrio o mantiene patrones existentes (equilibrio dinámico).")
+
+    # 2. Interpretación de la Varianza y Máximo
+    interpretacion.append(f"- Varianza del campo: {v:.4f}")
+    if v < 0.001 and mx < 0.1: # Para campos casi uniformes
+        interpretacion.append("- El campo es muy uniforme o 'plano', sin mucha diversidad.")
+    elif v > 0.5: # Alta diversidad
+        interpretacion.append("- El campo tiene alta diversidad de valores y actividad.")
+    else:
+        interpretacion.append("- Diversidad de campo moderada con patrones emergentes.")
     
-    # Construir análisis
-    analysis = [
-        f"Análisis del sistema:",
-        f"- Entropía {entropy_level} ({entropy:.4f}), {entropy_trend}",
-        f"- {entropy_implication}",
-        f"- {pattern_dist}",
-        f"- {symmetry_desc}"
-    ]
-    
-    # Añadir interpretación de decisiones si está disponible
-    decisions = metrics.get('applied_attractors', [])
-    if decisions:
-        last_decision = decisions[-1] if isinstance(decisions, list) else decisions
-        analysis.append(f"- Última acción: {last_decision}")
-    
-    # Añadir recomendación basada en el estado
-    if entropy < 0.01 and abs(entropy_change) < 1.0:
-        analysis.append("Recomendación: El sistema está muy estable. Considere introducir estímulos.")
-    elif entropy > 0.1 and entropy_change > 5.0:
-        analysis.append("Recomendación: El sistema está en alto desorden. Considere aplicar atractores conocidos.")
-    
-    return "\n".join(analysis)
+    # 3. Interpretación de la Simetría y Composición Celular
+    interpretacion.append(f"- Simetría del campo: {symmetry:.2f}")
+    if symmetry > 0.9:
+        interpretacion.append("- El campo exhibe una alta simetría (estructurado).")
+    elif symmetry < 0.4:
+        interpretacion.append("- El campo es asimétrico o caótico (poca estructura).")
+    else:
+        interpretacion.append("- Simetría moderada, con algunos patrones visibles.")
+
+
+    interpretacion.append(f"- Composición: {active_cells} Activas / {inhibited_cells} Inhibidas / {neutral_cells} Neutras.")
+    active_ratio = active_cells / total_cells
+    inhibited_ratio = inhibited_cells / total_cells
+    neutral_ratio = neutral_cells / total_cells
+
+    if active_ratio > 0.5:
+        interpretacion.append("- Predominio de celdas activas (energía, exploración).")
+    elif inhibited_ratio > 0.5:
+        interpretacion.append("- Predominio de celdas inhibidas (supresión, quietud).")
+    elif neutral_ratio > 0.5:
+        interpretacion.append("- Predominio de celdas neutras (potencial, inactividad pasiva).")
+    else:
+        interpretacion.append("- Balance de celdas activas, inhibidas y neutras (dinamismo equilibrado).")
+
+
+    # 4. Contexto de la Decisión del Metamódulo
+    interpretacion.append(f"- Última Decisión del Metamódulo: {decision_context.upper()}")
+    interpretacion.append(f"- Atractores aplicados: {applied_attractors_context}.")
+
+    return "Análisis del sistema:\n" + "\n".join(interpretacion)
+
+
 
 
 

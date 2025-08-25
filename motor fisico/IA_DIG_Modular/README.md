@@ -17,21 +17,25 @@ El sistema DIG (Dynamic Information Gradient) es una arquitectura de IA que mode
 ## Mejoras Recientes
 
 ### 1. Cálculo de Entropía Optimizado
+
 - Implementación vectorizada para mejor rendimiento
 - Cálculo ponderado por varianza local
 - Suavizado adaptativo del mapa de entropía
 
 ### 2. Reorganización de Campo Mejorada
+
 - Reglas de evolución celular más estables
 - Integración mejorada con memoria de atractores
 - Manejo de condiciones de contorno mejorado
 
 ### 3. Análisis de Métricas Avanzado
+
 - Seguimiento de distribución de estados (activos/inhibidos/neutrales)
 - Cálculo de simetría de patrones
 - Análisis de tendencias temporales
 
 ### 4. Integración de Memoria
+
 - Búsqueda jerárquica de atractores similares
 - Combinación ponderada de múltiples atractores
 - Actualización adaptativa de la memoria basada en éxito
@@ -58,18 +62,21 @@ El sistema DIG (Dynamic Information Gradient) es una arquitectura de IA que mode
 ## Instalación
 
 1. Clonar el repositorio:
+
    ```bash
    git clone [URL_DEL_REPOSITORIO]
    cd IA_DIG_Modular
    ```
 
 2. Crear un entorno virtual (recomendado):
+
    ```bash
    python -m venv venv
    source venv/bin/activate  # En Windows: venv\Scripts\activate
    ```
 
 3. Instalar dependencias:
+
    ```bash
    pip install -r requirements.txt
    ```
