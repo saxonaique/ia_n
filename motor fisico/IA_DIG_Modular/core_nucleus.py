@@ -1,7 +1,6 @@
 import numpy as np
 import scipy.ndimage as ndi
-from typing import Optional, Tuple, Dict, Any, List # <-- CORRECCIÓN: Añadido List
-from collections import Counter
+from typing import Optional, Tuple, Dict, Any, List # CORRECCIÓN: 'List' añadido
 
 class CoreNucleus:
     """
@@ -48,12 +47,20 @@ class CoreNucleus:
         Calcula la entropía del campo informacional.
         Asume que los valores del campo están en [0, 1].
         """
-        # Crear un histograma de los valores del campo
-        counts, _ = np.histogram(self.field, bins=256, range=(0, 1))
-        # Filtrar los conteos que son cero
-        counts = counts[counts > 0]
-        # Calcular las probabilidades
-        probabilities = counts / counts.sum()
+        # Discretizar el campo en un número razonable de bins para calcular las probabilidades
+        num_bins = 10 # Por ejemplo, 10 bins para valores de 0 a 1
+        counts, _ = np.histogram(self.field, bins=num_bins, range=(0, 1))
+        
+        # Calcular las probabilidades para cada bin
+        total_elements = counts.sum()
+        if total_elements == 0:
+            return 0.0 # Campo vacío o uniforme, entropía 0
+            
+        probabilities = counts / total_elements
+        
+        # Eliminar las probabilidades cero para evitar log(0)
+        probabilities = probabilities[probabilities > 0]
+        
         # Calcular la entropía de Shannon
         self.entropy = -np.sum(probabilities * np.log2(probabilities))
         return float(self.entropy)
@@ -133,6 +140,7 @@ class CoreNucleus:
             "varianza": self.calculate_variance(),
             "máximo": self.calculate_max(),
         }
+
 
 
 

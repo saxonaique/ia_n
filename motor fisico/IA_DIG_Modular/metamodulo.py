@@ -1,6 +1,7 @@
 import numpy as np
 import time
 from typing import Dict, Any, Optional, List, Tuple
+from scipy import ndimage as ndi
 
 # Importar todos los módulos de tu IA DIG
 from sensor_module import SensorModule 
@@ -38,7 +39,12 @@ class Metamodulo:
         # Estado interno del Metamodulo
         self.current_cycle = 0
         self.last_global_decision = None
+        self.last_recommendation = None
+        self.consecutive_cycles = 0
+        self.consecutive_inhibitions = 0  # Track consecutive inhibition cycles
+        self.last_action = None  # Track the last action taken
         self.log_history = [] 
+        self.last_metrics = None
 
         print("Metamodulo: Todos los módulos DIG inicializados.")
 
@@ -164,46 +170,137 @@ class Metamodulo:
             # Calcular simetría (comparando el campo con su reflejo vertical)
             symmetry = np.mean(current_field_01 == np.flipud(current_field_01))
             
-            # 3. Aplicar reglas de decisión jerárquicas
-            if global_entropy > 1.0:  # Entropía muy alta (caos)
-                self.last_global_decision = 'inhibir'
-                cycle_summary['metamodule_decision'] = 'inhibir'
-                self._log(f"Metamodulo: Sobrecarga detectada (E={global_entropy:.3f}, N={neutral_ratio:.1%}). Aplicando suavizado global.")
-                
-                # Aplicar suavizado gaussiano fuerte para reducir la entropía
-                final_field_01 = ndi.gaussian_filter(current_field_01, sigma=2.0)
-                applied_attractors_names = ['Suavizado Global']
-                
-            elif global_entropy < 0.05 and symmetry > 0.9:  # Campo muerto
-                self.last_global_decision = 'activar'
-                cycle_summary['metamodule_decision'] = 'activar'
-                self._log(f"Metamodulo: Campo muerto detectado (E={global_entropy:.3f}, S={symmetry:.2f}). Inyectando ruido.")
-                
-                # Inyectar ruido estructurado para reactivar el campo
-                noise = np.random.normal(loc=0.5, scale=0.3, size=current_field_01.shape)
-                final_field_01 = np.clip(current_field_01 + noise * 0.5, 0, 1)
-                applied_attractors_names = ['Inyección de Ruido']
-                
-            elif symmetry < 0.5:  # Baja simetría (desorganización)
-                self.last_global_decision = 'reorganizar'
-                cycle_summary['metamodule_decision'] = 'reorganizar'
-                self._log(f"Metamodulo: Baja simetría detectada (S={symmetry:.2f}). Aplicando reorganización global.")
-                
-                # Aplicar reorganización global para mejorar la estructura
-                temp_field = ndi.median_filter(current_field_01, size=3)
-                final_field_01 = ndi.gaussian_filter(temp_field, sigma=0.5)
-                applied_attractors_names = ['Reorganización Global']
-                
-            else:  # Estado normal
-                self.last_global_decision = 'act'
-                cycle_summary['metamodule_decision'] = 'act'
-                self._log(f"Metamodulo: Estado normal (E={global_entropy:.3f}, S={symmetry:.2f}, A/I/N={active_ratio:.1%}/{inhibited_ratio:.1%}/{neutral_ratio:.1%}). Aplicando reorganización local con memoria.")
-                
-                # Aplicar reorganización local con memoria
-                final_field_01 = self.core_nucleus.reorganize_field()
-                applied_attractors_names = ['Reorganización Local con Memoria']
+            # 3. Aplicar reglas de decisión jerárquicas con memoria de recomendaciones previas
             
-            # Registrar atractores aplicados
+            # Verificar si hay una recomendación previa y si sigue siendo válida
+            use_previous_recommendation = False
+            if self.last_recommendation and self.consecutive_cycles < 3:
+                # Verificar si la recomendación previa sigue siendo relevante
+                if (self.last_recommendation == 'Reorganización Local con Memoria' and 
+                    0.5 <= global_entropy <= 1.0 and 
+                    neutral_ratio > 0.2):
+                    use_previous_recommendation = True
+                elif (self.last_recommendation == 'Inyección de Ruido' and 
+                      global_entropy < 0.5 and 
+                      neutral_ratio > 0.7):
+                    use_previous_recommendation = True
+            
+            # Si no usamos la recomendación previa, determinar nueva acción
+            if not use_previous_recommendation:
+                self.consecutive_cycles = 0
+                
+                # 1. Verificar si hay sobrecarga informacional
+                if (global_entropy > 1.0 or (neutral_ratio < 0.1 and global_entropy > 0.8)) and self.consecutive_inhibitions < 1:
+                    self.last_global_decision = 'inhibir'
+                    cycle_summary['metamodule_decision'] = 'inhibir'
+                    self._log(f"Metamodulo: Sobrecarga detectada (E={global_entropy:.3f}, N={neutral_ratio:.1%}). Aplicando suavizado global.")
+                    final_field_01 = ndi.gaussian_filter(current_field_01, sigma=2.0)
+                    applied_attractors_names = ['Suavizado Global']
+                    self.last_recommendation = 'Reorganización Local con Memoria'
+                    self.consecutive_inhibitions += 1
+                    self.last_action = 'inhibir'
+                elif self.consecutive_inhibitions >= 1:
+                    # Forzar cambio después de un ciclo de inhibición
+                    self._log("Metamodulo: Evitando ciclos consecutivos de inhibición. Aplicando reorganización local.")
+                    final_field_01 = self.core_nucleus.reorganize_field()
+                    applied_attractors_names = ['Reorganización Local Forzada']
+                    self.last_recommendation = 'Reorganización Local con Memoria'
+                    self.consecutive_inhibitions = 0
+                    self.last_global_decision = 'act'
+                    cycle_summary['metamodule_decision'] = 'act'
+                    self.last_action = 'reorganizar'
+                
+                # 2. Verificar si el campo está muerto
+                elif global_entropy < 0.05 and symmetry > 0.9:
+                    self.last_global_decision = 'activar'
+                    cycle_summary['metamodule_decision'] = 'activar'
+                    self._log(f"Metamodulo: Campo muerto detectado (E={global_entropy:.3f}, S={symmetry:.2f}). Inyectando ruido.")
+                    noise = np.random.normal(loc=0.5, scale=0.3, size=current_field_01.shape)
+                    final_field_01 = np.clip(current_field_01 + noise * 0.5, 0, 1)
+                    applied_attractors_names = ['Inyección de Ruido']
+                    self.last_recommendation = 'Reorganización Local con Memoria'
+                
+                # 3. Verificar si hay baja simetría
+                elif symmetry < 0.5 and global_entropy > 0.3:
+                    self.last_global_decision = 'reorganizar'
+                    cycle_summary['metamodule_decision'] = 'reorganizar'
+                    self._log(f"Metamodulo: Baja simetría detectada (S={symmetry:.2f}). Aplicando reorganización global.")
+                    temp_field = ndi.median_filter(current_field_01, size=3)
+                    final_field_01 = ndi.gaussian_filter(temp_field, sigma=0.5)
+                    applied_attractors_names = ['Reorganización Global']
+                    self.last_recommendation = 'Reorganización Local con Memoria'
+                
+                # 4. Estado normal - aplicar balance energético
+                else:
+                    # Si no hay celdas activas, forzar una activación mínima
+                    if active_ratio == 0 and neutral_ratio > 0:
+                        self._log("Metamodulo: Sin celdas activas. Aplicando pulso mínimo de activación.")
+                        neutral_mask = (ternary_field == 0)
+                        neutral_indices = np.argwhere(neutral_mask)
+                        np.random.shuffle(neutral_indices)
+                        # Activar entre 0.5% y 1% de las celdas neutras
+                        min_activation = max(1, int(neutral_indices.shape[0] * 0.005))
+                        max_activation = max(1, int(neutral_indices.shape[0] * 0.01))
+                        num_to_activate = np.random.randint(min_activation, max_activation + 1)
+                        
+                        final_field_01 = current_field_01.copy()
+                        for idx in neutral_indices[:num_to_activate]:
+                            final_field_01[tuple(idx)] = 1.0  # Activar celdas seleccionadas
+                        
+                        self.last_global_decision = 'activar_min'
+                        cycle_summary['metamodule_decision'] = 'activar_min'
+                        applied_attractors_names = ['Pulso Mínimo de Activación']
+                        self.last_recommendation = 'Reorganización Local con Memoria'
+                        self.last_action = 'activar_min'
+                        self._log(f"Metamodulo: Activadas {num_to_activate} celdas inactivas ({(num_to_activate/total_cells*100):.2f}% del total).")
+                    
+                    # Balance energético: si muchas inhibidas y neutras, activar algunas
+                    elif inhibited_ratio > 0.6 and neutral_ratio > 0.3 and active_ratio < 0.1:
+                        self._log(f"Metamodulo: Aplicando pulso de activación (I={inhibited_ratio:.1%}, N={neutral_ratio:.1%}).")
+                        # Seleccionar aleatoriamente un 10% de las celdas neutras para activar
+                        neutral_mask = (ternary_field == 0)
+                        neutral_indices = np.argwhere(neutral_mask)
+                        np.random.shuffle(neutral_indices)
+                        num_to_activate = int(neutral_indices.shape[0] * 0.1)
+                        
+                        final_field_01 = current_field_01.copy()
+                        for idx in neutral_indices[:num_to_activate]:
+                            final_field_01[tuple(idx)] = 1.0  # Activar celdas seleccionadas
+                        
+                        self.last_global_decision = 'balancear'
+                        cycle_summary['metamodule_decision'] = 'balancear'
+                        applied_attractors_names = ['Pulso de Activación']
+                        self.last_recommendation = 'Reorganización Local con Memoria'
+                    else:
+                        # Estado normal - reorganización local con memoria
+                        self.last_global_decision = 'act'
+                        cycle_summary['metamodule_decision'] = 'act'
+                        self._log(f"Metamodulo: Estado normal (E={global_entropy:.3f}, S={symmetry:.2f}, A/I/N={active_ratio:.1%}/{inhibited_ratio:.1%}/{neutral_ratio:.1%}).")
+                        final_field_01 = self.core_nucleus.reorganize_field()
+                        applied_attractors_names = ['Reorganización Local con Memoria']
+                        self.last_recommendation = 'Reorganización Local con Memoria'
+            else:
+                # Usar la recomendación del ciclo anterior si es válida
+                self.consecutive_cycles += 1
+                self._log(f"Metamodulo: Continuando con recomendación previa: {self.last_recommendation} (ciclo {self.consecutive_cycles})")
+                
+                if self.last_recommendation == 'Reorganización Local con Memoria':
+                    self.last_global_decision = 'act'
+                    cycle_summary['metamodule_decision'] = 'act'
+                    final_field_01 = self.core_nucleus.reorganize_field()
+                    applied_attractors_names = ['Reorganización Local con Memoria']
+                    self.last_action = 'reorganizar'
+                    self._log("Metamodulo: Aplicando Reorganización Local con Memoria según recomendación previa.")
+                
+                # Actualizar recomendación para el próximo ciclo
+                if self.consecutive_cycles >= 2:
+                    self._log("Metamodulo: Límite de ciclos con la misma recomendación alcanzado. Reiniciando recomendación.")
+                    self.last_recommendation = None
+                    self.consecutive_cycles = 0
+            
+            # Registrar atractores aplicados y limpiar contador de inhibiciones si no se está inhibiendo
+            if self.last_global_decision != 'inhibir':
+                self.consecutive_inhibitions = 0
             cycle_summary['applied_attractors'].extend(applied_attractors_names)
             
 
@@ -215,6 +312,15 @@ class Metamodulo:
             final_variance = final_metrics_01['varianza']
             final_maximo = final_metrics_01['máximo']
             entropy_change_pct = (final_entropy - global_entropy) / global_entropy * 100 if global_entropy != 0 else 0.0
+            
+            # Actualizar métricas para el próximo ciclo
+            self.last_metrics = {
+                'entropy': final_entropy,
+                'symmetry': symmetry,
+                'active_ratio': active_ratio,
+                'inhibited_ratio': inhibited_ratio,
+                'neutral_ratio': neutral_ratio
+            }
             
             # --- Mapear campo [0,1] a ternario [-1,0,1] para IA_Interpreter ---
             ternary_field_for_interpretation = self._map_01_to_ternary_for_metrics(final_field_01)
