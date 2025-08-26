@@ -1,5 +1,6 @@
 import numpy as np
-from typing import Optional, Tuple, Dict, Any
+import scipy.ndimage as ndi
+from typing import Optional, Tuple, Dict, Any, List # <-- CORRECCIÓN: Añadido List
 from collections import Counter
 
 class CoreNucleus:
@@ -7,239 +8,152 @@ class CoreNucleus:
     Núcleo Entrópico: Módulo central de procesamiento de la IA DIG
     
     Responsable del análisis de entropía y reorganización del campo informacional
-    hacia estados de equilibrio.
+    hacia estados de equilibrio utilizando un campo de valores en [0, 1].
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, field_shape: Tuple[int, int] = (64, 64)):
         """
         Inicializa el Núcleo Entrópico.
-        
+
         Args:
-            config: Configuración para el cálculo de entropía y equilibrio
+            field_shape: La forma (alto, ancho) del campo informacional.
         """
-        self.field: Optional[np.ndarray] = None
-        self.entropy: Optional[float] = None
-        self.history: list = []
-        self.config = config or {
-            'entropy_window': 3,  # Tamaño de la ventana para cálculo de entropía local
-            'equilibrium_threshold': 0.1,  # Umbral para considerar equilibrio
-            'max_history': 10,  # Máximo de estados históricos a mantener
-            'min_entropy_change': 1e-5,  # Cambio mínimo para considerar significativo
-            'reorganization_iterations': 15, # <-- CAMBIO: Más iteraciones para la convergencia
-            'reorganization_alpha': 0.15, # <-- CAMBIO: Mayor influencia de vecinos
-            'reorganization_noise_factor': 0.03, # <-- CAMBIO: Menos ruido para fomentar estabilidad
-            'reorganization_stability_threshold': 0.1 # <-- NUEVO: Umbral para celdas a estabilizar
-        }
-    
+        self.field_shape = field_shape
+        self.field = np.zeros(field_shape, dtype=np.float32) # Usar float32 para coherencia
+        self.entropy = 0.0
+        self.varianza = 0.0
+        self.max_val = 0.0
+        self.log_history = [] # Para registrar estancamiento
+
+
     def receive_field(self, field: np.ndarray) -> None:
         """
         Recibe el campo informacional para su procesamiento.
+        Asegura que el campo esté en el rango [0, 1].
         
         Args:
-            field: Campo informacional ternario (-1, 0, 1)
+            field: Campo informacional con valores en el rango [0, 1].
         """
         if not isinstance(field, np.ndarray):
             raise ValueError("El campo debe ser un array de NumPy")
-        if len(field.shape) != 2: # Asegurarse de que el campo sea 2D
-             raise ValueError(f"El campo debe ser 2D, se recibió un campo con forma {field.shape}")
-            
-        self.field = field.copy()
-        self._update_history()
-    
-    def compute_entropy(self, window_size: Optional[int] = None) -> Tuple[float, np.ndarray]:
+        if field.shape != self.field_shape:
+             # Redimensionar el campo entrante si su forma no coincide con la esperada
+            # Esto puede distorsionar, pero evita errores si el sensorium produce un tamaño diferente
+            field = np.resize(field, self.field_shape)
+        
+        self.field = np.clip(field, 0, 1).astype(np.float32) # Asegurarse de que esté en [0, 1] y sea float
+
+    def calculate_entropy(self) -> float:
         """
         Calcula la entropía del campo informacional.
+        Asume que los valores del campo están en [0, 1].
+        """
+        # Crear un histograma de los valores del campo
+        counts, _ = np.histogram(self.field, bins=256, range=(0, 1))
+        # Filtrar los conteos que son cero
+        counts = counts[counts > 0]
+        # Calcular las probabilidades
+        probabilities = counts / counts.sum()
+        # Calcular la entropía de Shannon
+        self.entropy = -np.sum(probabilities * np.log2(probabilities))
+        return float(self.entropy)
+
+    def calculate_variance(self) -> float:
+        """Calcula la varianza del campo informacional."""
+        self.varianza = np.var(self.field)
+        return float(self.varianza)
+
+    def calculate_max(self) -> float:
+        """Calcula el valor máximo del campo informacional."""
+        self.max_val = np.max(self.field)
+        return float(self.max_val)
+
+    def reorganize_field(self, applied_attractors: List[str] = None) -> np.ndarray:
+        """
+        Reorganiza el campo informacional utilizando convolución y ruido.
         
         Args:
-            window_size: Tamaño de la ventana para cálculo de entropía local.
-                        Si es None, usa el valor de la configuración.
-                        
+            applied_attractors: Lista de nombres de atractores que fueron decididos por Metamodulo.
         Returns:
-            tuple: (entropía global, mapa de entropía local)
+            np.ndarray: Campo reorganizado en el rango [0, 1].
         """
-        if self.field is None:
-            raise ValueError("No se ha recibido ningún campo. Use receive_field() primero.")
-        
-        window_size = window_size or self.config['entropy_window']
-        half_window = window_size // 2
-        
-        # Rellenar bordes para manejar los límites
-        padded = np.pad(self.field, half_window, mode='edge')
-        
-        # Inicializar mapa de entropía
-        entropy_map = np.zeros_like(self.field, dtype=float)
-        
-        # Calcular entropía local en ventanas deslizantes
-        for i in range(self.field.shape[0]):
-            for j in range(self.field.shape[1]):
-                window = padded[i:i+window_size, j:j+window_size]
-                
-                if window.size == 0: 
-                    entropy_map[i, j] = 0.0
-                    continue
+        if applied_attractors is None:
+            applied_attractors = []
 
-                counts = Counter(window.flatten())
-                total = sum(counts.values())
-                entropy = 0.0
-                for count in counts.values():
-                    p = count / total
-                    entropy -= p * np.log2(p) if p > 0 else 0
-                entropy_map[i, j] = entropy
+        initial_field_for_reorg = self.field.copy() # Estado inicial para detección de estancamiento
         
-        global_entropy = float(np.mean(entropy_map))
-        self.entropy = global_entropy
+        # Kernel de convolución simple (suavizado/difusión)
+        kernel = np.array([[0.05, 0.1, 0.05],
+                           [0.1,  0.4, 0.1],
+                           [0.05, 0.1, 0.05]])
         
-        return global_entropy, entropy_map
-    
-    def get_variance(self) -> float:
-        """
-        Calcula la varianza del campo informacional.
+        reorganized = ndi.convolve(self.field, kernel, mode='reflect')
+
+        # Influencias de atractores: se aplica ruido moderado si se decidió una intervención.
+        # Este es un placeholder simple para la influencia de atractores en esta versión simplificada.
+        if applied_attractors: # Si al menos un atractor fue activado
+            noise_strength = 0.15 
+            noise = np.random.normal(0, noise_strength, self.field_shape)
+            reorganized += noise
+
+        # Asegurar que los valores permanezcan en el rango [0, 1]
+        reorganized = np.clip(reorganized, 0, 1)
         
-        Returns:
-            float: Varianza del campo
-        """
-        if self.field is None:
-            return 0.0 # Valor por defecto si no hay campo para evitar errores
-        return float(np.var(self.field))
+        # Detección de estancamiento (comparación con el estado antes de la reorganización)
+        if np.array_equal(reorganized, initial_field_for_reorg):
+            self.log_history.append(f"[Núcleo] El campo no cambió significativamente tras la reorganización. Posible estancamiento.")
+            print(f"[Núcleo] El campo no cambió significativamente tras la reorganización. Posible estancamiento.") # DEBUG
 
-    def get_max_value(self) -> float:
-        """
-        Calcula el valor máximo absoluto del campo informacional.
-        
-        Returns:
-            float: Valor máximo absoluto del campo
-        """
-        if self.field is None:
-            return 0.0 # Valor por defecto si no hay campo para evitar errores
-        return float(np.max(np.abs(self.field)))
-
-
-    def is_equilibrium(self, threshold: Optional[float] = None) -> bool:
-        """
-        Determina si el sistema ha alcanzado un estado de equilibrio.
-        
-        Args:
-            threshold: Umbral de entropía para considerar equilibrio.
-                     Si es None, usa el valor de la configuración.
-                     
-        Returns:
-            bool: True si el sistema está en equilibrio, False en caso contrario
-        """
-        if self.entropy is None:
-            self.compute_entropy()
-            
-        threshold = threshold or self.config['equilibrium_threshold']
-        return self.entropy < threshold
-    
-    def reorganize_field(self, memory_reference: Optional[np.ndarray] = None) -> np.ndarray:
-        """
-        Reorganiza el campo informacional para reducir la entropía, fomentando patrones.
-        
-        Args:
-            memory_reference: Campo de referencia de la memoria de atractores (opcional)
-            
-        Returns:
-            np.ndarray: Campo reorganizado
-        """
-        if self.field is None:
-            raise ValueError("No hay campo para reorganizar.")
-            
-        current_field_float = self.field.copy().astype(float) 
-        rows, cols = self.field.shape
-        
-        num_iterations = self.config['reorganization_iterations']
-        alpha = self.config['reorganization_alpha']
-        noise_factor = self.config['reorganization_noise_factor']
-        stability_threshold = self.config['reorganization_stability_threshold']
-
-        for _ in range(num_iterations):
-            next_field_float = current_field_float.copy()
-
-            # Aplicar difusión o influencia de vecinos con un sesgo hacia la estabilidad
-            for i in range(rows):
-                for j in range(cols):
-                    neighborhood = current_field_float[
-                        max(0, i-1):min(rows, i+2),
-                        max(0, j-1):min(cols, j+2)
-                    ]
-                    
-                    if neighborhood.size > 0:
-                        avg_neighbor = np.mean(neighborhood)
-                        
-                        # Calcula la "tensión" local (qué tan diferente es la celda del promedio)
-                        local_tension = np.abs(current_field_float[i, j] - avg_neighbor)
-                        
-                        # Si la tensión local es baja (ya es similar a los vecinos), tender a estabilizarse
-                        # Si es alta, permitir más cambio (exploración/reorganización)
-                        if local_tension < stability_threshold:
-                            # Estabilizar: Moverse más hacia el promedio
-                            next_field_float[i, j] += (avg_neighbor - next_field_float[i, j]) * alpha * 1.5 # Más influencia del promedio
-                        else:
-                            # Reorganizar: Influencia del promedio más ruido
-                            next_field_float[i, j] += (avg_neighbor - next_field_float[i, j]) * alpha + \
-                                                      np.random.randn() * noise_factor
-
-            current_field_float = next_field_float
-            current_field_float = np.clip(current_field_float, -1.0, 1.0) 
-
-            # Si hay una referencia de memoria, aplicarla gradualmente en cada iteración
-            if memory_reference is not None and memory_reference.shape == self.field.shape:
-                beta = 0.1 # Factor de influencia de la memoria por iteración
-                current_field_float = (1 - beta) * current_field_float + beta * memory_reference.astype(float)
-                current_field_float = np.clip(current_field_float, -1.0, 1.0) 
-
-        # Finalmente, convertir el campo de nuevo a ternario después de las iteraciones
-        # <-- CAMBIO CLAVE AQUÍ: Ajustar umbrales para que el estado neutro sea más "grande"
-        new_field_ternary = np.where(current_field_float > 0.2, 1, # Umbral más alto para ser '1'
-                                     np.where(current_field_float < -0.2, -1, 0)).astype(np.int8) # Umbral más bajo para ser '-1'
-
-        self.field = new_field_ternary
-        self._update_history()
-        
-        return new_field_ternary
+        self.field = reorganized
+        return self.field
     
     def get_entropy_gradient(self) -> np.ndarray:
         """
         Calcula el gradiente de entropía del campo.
+        Utiliza el campo actual en [0,1].
         
         Returns:
-            np.ndarray: Gradiente de entropía
+            np.ndarray: Gradiente de entropía.
         """
-        if self.field is None:
-            return np.zeros((64, 64)) 
-            
-        grad_y, grad_x = np.gradient(self.field.astype(float))
+        if self.field is None or self.field.size == 0:
+            return np.zeros(self.field_shape) # Devuelve un campo de ceros si no hay campo
+
+        grad_y, grad_x = np.gradient(self.field)
         return np.sqrt(grad_x**2 + grad_y**2)
-    
-    def _update_history(self) -> None:
-        """Actualiza el historial de estados del campo."""
-        if self.field is not None:
-            self.history.append(self.field.copy())
-            if len(self.history) > self.config['max_history']:
-                self.history.pop(0)
-    
-    def get_entropy_change_rate(self) -> float:
+
+    def get_metrics(self) -> Dict[str, Any]:
         """
-        Calcula la tasa de cambio de entropía a lo largo del tiempo.
+        Calcula y devuelve las métricas actuales del campo.
         
         Returns:
-            float: Tasa de cambio de entropía por paso de tiempo
+            Dict: Diccionario con entropía, varianza y máximo del campo.
         """
-        if len(self.history) < 2:
-            return 0.0
-            
-        entropies = []
-        original_field_backup = self.field.copy()
-        for state in self.history:
-            self.field = state
-            entropy, _ = self.compute_entropy()
-            entropies.append(entropy)
-        self.field = original_field_backup
-            
-        if len(entropies) < 2:
-            return 0.0
-            
-        changes = [entropies[i+1] - entropies[i] for i in range(len(entropies)-1)]
-        return float(np.mean(changes))
+        return {
+            "entropía": self.calculate_entropy(),
+            "varianza": self.calculate_variance(),
+            "máximo": self.calculate_max(),
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

@@ -13,7 +13,7 @@ class VisualizadorDIG(tk.Tk):
     def __init__(self, metamodulo_instance: Metamodulo):
         super().__init__()
         self.title("DIG Visualizer")
-        self.geometry("800x600") # Aumentado el tamaño para mejor visualización
+        self.geometry("900x800") # Aumentado el tamaño para mejor visualización
 
         self.metamodulo = metamodulo_instance
         self.current_text_input = "Inicia el sistema DIG con este texto de ejemplo." # Texto por defecto
@@ -143,6 +143,7 @@ class VisualizadorDIG(tk.Tk):
         # CORRECCIÓN: Formateo condicional para el print statement
         log_entropia = f"{entropia:.3f}" if isinstance(entropia, (int, float)) else str(entropia)
         print(f"[Visualizador] Ciclo {cycle_summary.get('cycle')}: Decisión={metamodule_decision}, Entropía={log_entropia}, Interpretación='{interpretacion}'")
+
 
 
 
