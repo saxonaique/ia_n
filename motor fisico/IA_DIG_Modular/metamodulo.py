@@ -1,16 +1,271 @@
+# -*- coding: utf-8 -*-
 import numpy as np
 import time
+import tkinter as tk
+from tkinter import ttk
 from typing import Dict, Any, Optional, List, Tuple
-from scipy import ndimage as ndi
+from queue import Queue, Empty
+import threading
 
-# Importar todos los módulos de tu IA DIG
-from sensor_module import SensorModule 
-from core_nucleus import CoreNucleus
-from memory_module import MemoriaAtractores 
-from evolution_processor import EvolutionProcessor
-from action_module import ModuloAccion 
-from ia_interpreter import interpretar_metrica 
+# --- Implementaciones de ejemplo de los módulos para hacer el código ejecutable ---
+# Si ya tienes estas clases en archivos separados, puedes eliminarlas
+# y corregir las importaciones en su lugar.
 
+class SensorModule:
+    """
+    Módulo de ejemplo para procesar la entrada.
+    Convierte un texto en un campo numérico.
+    """
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+        self.field_shape = self.config.get('field_shape', (64, 64))
+        self._log(f"Iniciando SensorModule con la configuración: {self.config}", level='DEBUG')
+
+    def process_input(self, raw_input: Any, input_type: str) -> np.ndarray:
+        """
+        Procesa una entrada cruda y la convierte en un campo numérico.
+        """
+        self._log(f"Procesando entrada de tipo: '{input_type}' con forma de campo: {self.field_shape}")
+        
+        if not isinstance(raw_input, str):
+            self._log(f"Entrada no es un string, convirtiendo a string.", level='WARNING')
+            raw_input = str(raw_input)
+            
+        value = len(raw_input) / 100.0
+        # Siempre crea un campo 2D del tamaño correcto
+        field = np.full(self.field_shape, value, dtype=np.float32)
+        return field
+
+    def _log(self, message: str, level: str = 'INFO') -> None:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SensorModule] [{level}] {message}")
+
+class CoreNucleus:
+    """
+    Núcleo de ejemplo para gestionar el campo de la IA.
+    """
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+        field_shape = self.config.get('field_shape', (64, 64))
+        if not isinstance(field_shape, (tuple, list)) or len(field_shape) != 2 or not all(isinstance(x, int) for x in field_shape):
+            self._log("La forma del campo en la configuración es inválida. Usando la forma por defecto (64, 64).", level='WARNING')
+            field_shape = (64, 64)
+
+        self.field = np.zeros(field_shape, dtype=np.float32)
+        self.field_history = []
+        self.hist_capacity = 10
+        self._log("CoreNucleus inicializado.", level='INFO')
+
+    def _log(self, message: str, level: str = 'INFO') -> None:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CoreNucleus] [{level}] {message}")
+
+    def receive_field(self, new_field: np.ndarray) -> None:
+        """
+        Recibe un nuevo campo y lo valida antes de almacenarlo.
+        """
+        if not isinstance(new_field, np.ndarray) or new_field.ndim != 2:
+            self._log(f"Campo recibido con forma incorrecta: {new_field.shape}. Esperado: {self.field.shape}. Creando un campo de ceros.", level='ERROR')
+            self.field = np.zeros(self.field.shape, dtype=np.float32)
+        elif new_field.shape != self.field.shape:
+             self._log(f"Tamaño de campo recibido ({new_field.shape}) no coincide con el tamaño esperado ({self.field.shape}). Intentando redimensionar.", level='WARNING')
+             try:
+                 self.field = new_field.reshape(self.field.shape).copy()
+             except Exception as e:
+                 self._log(f"Error al redimensionar el campo: {e}. Creando un nuevo campo de ceros.", level='ERROR')
+                 self.field = np.zeros(self.field.shape, dtype=np.float32)
+        else:
+            self.field = new_field.copy()
+
+        self.field_history.append(self.field.copy())
+        if len(self.field_history) > self.hist_capacity:
+            self.field_history.pop(0)
+
+    def get_metrics(self) -> Dict[str, float]:
+        """
+        Calcula métricas de ejemplo para el campo actual.
+        """
+        if self.field.size == 0 or self.field.ndim != 2:
+            self._log("El campo no es una matriz válida o está vacío para calcular métricas. Devolviendo valores predeterminados.", level='ERROR')
+            return {'varianza': 0.0, 'entropia': 0.0, 'maximo': 0.0}
+        
+        try:
+            variance = np.var(self.field)
+            
+            # Aplanamos el campo para el cálculo de entropía
+            flattened_field = self.field.flatten()
+            
+            # Se asegura de que la matriz no esté vacía antes de bincount
+            if flattened_field.size > 0:
+                bins = np.digitize(flattened_field, bins=10)
+                counts = np.bincount(bins)
+                probabilities = counts / counts.sum()
+                shannon_entropy = -np.sum(probabilities * np.log2(probabilities + 1e-10))
+            else:
+                self._log("La matriz aplanada está vacía. Entropía no calculable.", level='WARNING')
+                shannon_entropy = 0.0
+                
+            max_val = np.max(self.field)
+            
+            return {'varianza': float(variance), 'entropia': float(shannon_entropy), 'maximo': float(max_val)}
+        except Exception as e:
+            self._log(f"Error general al calcular métricas: {e}. Devolviendo valores predeterminados.", level='ERROR')
+            return {'varianza': 0.0, 'entropia': 0.0, 'maximo': 0.0}
+
+    def reorganize_field(self, applied_attractors: List[Any]) -> np.ndarray:
+        """
+        Simula la reorganización del campo.
+        """
+        return self.field * 0.9
+
+class MemoriaAtractores:
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+    def find_closest_attractor(self, field_input: np.ndarray) -> Optional[np.ndarray]:
+        return np.full_like(field_input, 0.5)
+    def save(self) -> None:
+        pass
+
+class EvolutionProcessor:
+    def __init__(self, memoria: MemoriaAtractores):
+        self.memoria = memoria
+    def evolve_memory(self) -> None:
+        pass
+
+class ModuloAccion:
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+    def apply_attractor(self, attractor: Any) -> None:
+        pass
+
+def interpretar_metrica(metrics: Dict[str, float]) -> str:
+    if metrics['entropia'] > 1.5:
+        return 'caotico'
+    elif metrics['varianza'] < 0.01:
+        return 'ordenado'
+    else:
+        return 'equilibrado'
+
+
+# --- Visualizador Tkinter Mejorado ---
+class Visualizador(tk.Tk):
+    def __init__(self, message_queue: Queue):
+        super().__init__()
+        self.message_queue = message_queue
+        self.title("Visualizador IA DIG")
+        self.geometry("800x600")
+        self.configure(bg='#282c34')
+        self.style = ttk.Style(self)
+        self.style.theme_use('clam')
+        self.style.configure('.', background='#282c34', foreground='#abb2bf')
+        self.style.configure('TFrame', background='#282c34')
+        self.style.configure('TLabel', background='#282c34', foreground='#abb2bf', font=('Inter', 10))
+
+        self._create_widgets()
+        self.after(100, self._process_messages)
+        print("[Visualizador] Visualizador Tkinter iniciado.")
+    
+    def _create_widgets(self):
+        # Frame principal con padding
+        main_frame = ttk.Frame(self, padding="10 10 10 10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Panel para el resumen ejecutivo
+        summary_frame = ttk.LabelFrame(main_frame, text="✅ RESUMEN EJECUTIVO ✅", padding="10 10 10 10", style='TFrame')
+        summary_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.status_label = ttk.Label(summary_frame, text="Estado: Esperando datos...", font=('Inter', 12, 'bold'))
+        self.status_label.pack(fill=tk.X, pady=(0, 5))
+        
+        self.decision_label = ttk.Label(summary_frame, text="Decisión: N/A", font=('Inter', 11))
+        self.decision_label.pack(fill=tk.X)
+        
+        self.recommendation_label = ttk.Label(summary_frame, text="Recomendación: N/A", font=('Inter', 11))
+        self.recommendation_label.pack(fill=tk.X)
+
+        # Panel para las métricas detalladas
+        metrics_frame = ttk.LabelFrame(main_frame, text="📊 MÉTRICAS DETALLADAS 📊", padding="10 10 10 10", style='TFrame')
+        metrics_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.entropy_label = ttk.Label(metrics_frame, text="Entropía: N/A")
+        self.entropy_label.pack(fill=tk.X)
+        
+        self.variance_label = ttk.Label(metrics_frame, text="Varianza: N/A")
+        self.variance_label.pack(fill=tk.X)
+
+        self.max_label = ttk.Label(metrics_frame, text="Máximo: N/A")
+        self.max_label.pack(fill=tk.X)
+
+        # Panel para los registros
+        log_frame = ttk.LabelFrame(main_frame, text="📜 REGISTROS DEL SISTEMA 📜", padding="10 10 10 10", style='TFrame')
+        log_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD, bg='#1e1e1e', fg='#f8f8f2', font=('Consolas', 9), relief=tk.FLAT)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        log_scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.config(yscrollcommand=log_scrollbar.set)
+        
+        # Tags para colores de logs
+        self.log_text.tag_config('INFO', foreground='#61afef')
+        self.log_text.tag_config('WARNING', foreground='#e5c07b')
+        self.log_text.tag_config('ERROR', foreground='#e06c75')
+        self.log_text.tag_config('DEBUG', foreground='#98c379')
+
+    def _process_messages(self):
+        while not self.message_queue.empty():
+            try:
+                message = self.message_queue.get(block=False)
+                self.update_ui(message)
+            except Empty:
+                pass
+        self.after(100, self._process_messages)
+
+    def update_ui(self, message: Dict[str, Any]):
+        if not isinstance(message, dict) or message.get('status') == 'success' or message.get('status') == 'error':
+            # Ignora mensajes de estado simples para evitar errores
+            print(f"[Visualizador] Ignorando mensaje de estado simple: {message}")
+            return
+            
+        summary = message.get('ia_interpretation', 'IA: Esperando datos...')
+        
+        # Actualizar logs
+        self.log_text.insert(tk.END, f"\n--- Inicio Ciclo {message.get('cycle')} ---\n", 'INFO')
+        self.log_text.insert(tk.END, message.get('full_log', '') + "\n")
+        self.log_text.see(tk.END)
+
+        # Extraer y actualizar el resumen ejecutivo
+        status_line = "Estado: N/A"
+        decision_line = "Decisión actual: N/A"
+        recommendation_line = "Recomendación: N/A"
+        
+        lines = summary.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('✅ ESTADO:'):
+                status_line = line.replace('✅ ESTADO:', 'Estado:')
+            elif 'Decisión actual:' in line:
+                decision_line = line.strip()
+            elif '💡 RECOMENDACIÓN:' in line:
+                recommendation_line = line.strip()
+                
+        self.status_label.config(text=status_line, foreground=self._get_status_color(status_line))
+        self.decision_label.config(text=decision_line)
+        self.recommendation_label.config(text=recommendation_line)
+
+        # Extraer y actualizar métricas detalladas
+        metrics = message.get('reorganized_field_metrics', {})
+        self.entropy_label.config(text=f"Entropía: {metrics.get('entropia', 'N/A'):.4f}")
+        self.variance_label.config(text=f"Varianza: {metrics.get('varianza', 'N/A'):.4f}")
+        self.max_label.config(text=f"Máximo: {metrics.get('maximo', 'N/A'):.4f}")
+    
+    def _get_status_color(self, status: str) -> str:
+        if 'EQUILIBRIO' in status or 'ORDERED' in status:
+            return '#98c379' # Verde
+        elif 'CAOTICO' in status or 'CHAOTIC' in status:
+            return '#e06c75' # Rojo
+        return '#61afef' # Azul por defecto
+
+# --- Código del Metamodulo ---
 
 class Metamodulo:
     """
@@ -19,384 +274,35 @@ class Metamodulo:
     y toma decisiones estratégicas.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """
-        Inicializa el Metamódulo y todos los submódulos de la IA DIG.
-
-        Args:
-            config: Configuración general para el Metamodulo y los submódulos.
-        """
+    def __init__(self, config: Optional[Dict[str, Any]] = None, message_queue: Optional[Queue] = None):
         self.config = config or self._default_config()
+        self.message_queue = message_queue if message_queue else Queue()
 
-        # Instanciar submódulos
         self.sensorium = SensorModule(self.config.get('sensor_module'))
-        # CoreNucleus ahora se inicializa con su field_shape, ya no recibe el config dict completo
-        self.core_nucleus = CoreNucleus(field_shape=self.config['sensor_module']['text']['target_field_size'])
+        self.core_nucleus = CoreNucleus(self.config.get('core_nucleus'))
         self.memoria = MemoriaAtractores(self.config.get('memory_module'))
         self.evolution_processor = EvolutionProcessor(self.memoria) 
         self.action_module = ModuloAccion(self.config.get('action_module'))
 
-        # Estado interno del Metamodulo
         self.current_cycle = 0
         self.last_global_decision = None
-        self.last_recommendation = None
-        self.consecutive_cycles = 0
-        self.consecutive_inhibitions = 0  # Track consecutive inhibition cycles
-        self.last_action = None  # Track the last action taken
         self.log_history = [] 
-        self.last_metrics = None
-
-        print("Metamodulo: Todos los módulos DIG inicializados.")
-
+        
     def _default_config(self) -> Dict[str, Any]:
-        """Define una configuración por defecto para todos los módulos."""
+        default_field_shape = (64, 64)
         return {
-            'metamodule': {
-                'entropy_threshold_act': 0.001, 
-                'max_cycles': 100,
-                'log_level': 'INFO'
-            },
-            'sensor_module': {
-                'image': {'resize': (64, 64)},
-                'audio': {
-                    'sample_rate': 22050, 'n_fft': 512, 'hop_length': 256,
-                    'n_mels': 64
-                },
-                'text': {
-                    'max_length': 256,
-                    'embedding_dim': 128,
-                    'target_field_size': (64, 64), # Mantener este tamaño para consistencia
-                }
-            },
-            'core_nucleus': { # Configuración para la transformación ternaria en Metamodulo
-                'ternary_low_threshold': 0.3, # <-- CAMBIO: de 0.45 a 0.3
-                'ternary_high_threshold': 0.7, # <-- CAMBIO: de 0.55 a 0.7
-            },
-            'memory_module': {
-                'similarity_threshold': 0.85,
-                'max_attractors': 500,
-                'storage_path': 'data/memory_data.json' 
-            },
-            'action_module': {
-                'output_dir': 'outputs',
-                'image': {'default_size': (256, 256)}, 
-                'feedback': {
-                    'enabled': True, 
-                    'log_file': 'feedback.log', 
-                    'file_path': 'data/feedback.json',
-                    'max_entries': 1000 
-                },
-                'text': {
-                    'max_length': 1000,
-                    'language': 'es'
-                }
-            },
-            'evolution_processor': {} 
+            'sensor_module': {'field_shape': default_field_shape},
+            'core_nucleus': {'field_shape': default_field_shape},
+            'memory_module': {},
+            'action_module': {}
         }
 
     def _log(self, message: str, level: str = 'INFO') -> None:
-        """Registra un mensaje en el historial del Metamodulo."""
-        log_entry = {'timestamp': time.time(), 'cycle': self.current_cycle, 'level': level, 'message': message}
+        log_entry = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [{level}] {message}"
         self.log_history.append(log_entry)
-        if self.config['metamodule'].get('log_level') == 'INFO' or level == 'ERROR':
-            print(f"[Metamodulo - Ciclo {self.current_cycle}] {level}: {message}")
-
-    def _map_01_to_ternary_for_metrics(self, field_01: np.ndarray) -> np.ndarray:
-        """
-        Mapea un campo de valores en [0, 1] a un campo ternario [-1, 0, 1]
-        para el cálculo de métricas específicas del IA_Interpreter.
-        """
-        ternary_field = np.zeros_like(field_01, dtype=np.int8)
-        low_thresh = self.config['core_nucleus']['ternary_low_threshold']
-        high_thresh = self.config['core_nucleus']['ternary_high_threshold']
-
-        ternary_field[field_01 < low_thresh] = -1 # Considerar 'caos' o inhibido
-        ternary_field[field_01 > high_thresh] = 1 # Considerar 'información' o activo
-        # Valores entre low_thresh y high_thresh se quedan como 0 (neutro/equilibrio)
-        return ternary_field
-
-
-    def process_cycle(self, raw_input: Any, input_type: str = 'auto') -> Dict[str, Any]:
-        """
-        Ejecuta un ciclo completo de procesamiento de la IA DIG.
-
-        Args:
-            raw_input: Datos brutos de entrada (ej. ruta de archivo, texto).
-            input_type: Tipo de los datos de entrada ('image', 'audio', 'text', 'auto').
-
-        Returns:
-            Dict: Un resumen del estado y las decisiones del ciclo.
-        """
-        self.current_cycle += 1
-        self._log(f"Iniciando ciclo con entrada tipo: {input_type}")
-
-        cycle_summary = {
-            'cycle': self.current_cycle,
-            'input_type': input_type,
-            'initial_entropy': None,
-            'metamodule_decision': 'unknown',
-            'applied_attractors': [],
-            'reorganized_field_metrics': None,
-            'action_output': None,
-            'action_feedback_stats': None
-        }
-
-        try:
-            # 1. Sensores: Capturar y transducir la entrada a campo [0,1]
-            self.sensorium.load_input(raw_input, input_type)
-            current_field_01 = self.sensorium.get_ternary_field() # Ahora devuelve [0,1]
-            self._log(f"Sensorium: Campo cargado con forma {current_field_01.shape} en rango [0,1]")
-
-            self.core_nucleus.receive_field(current_field_01)
-            initial_metrics = self.core_nucleus.get_metrics()
-            global_entropy = initial_metrics['entropía']
-            cycle_summary['initial_entropy'] = global_entropy
-            self._log(f"Núcleo: Entropía inicial calculada: {global_entropy:.3f}")
-
-            # 2. Analizar el estado actual del campo
-            ternary_field = self._map_01_to_ternary_for_metrics(current_field_01)
-            total_cells = ternary_field.size
-            
-            # Contar células en cada estado
-            active_cells = np.sum(ternary_field == 1)
-            inhibited_cells = np.sum(ternary_field == -1)
-            neutral_cells = np.sum(ternary_field == 0)
-            
-            # Calcular proporciones
-            active_ratio = active_cells / total_cells
-            inhibited_ratio = inhibited_cells / total_cells
-            neutral_ratio = neutral_cells / total_cells
-            
-            # Calcular simetría (comparando el campo con su reflejo vertical)
-            symmetry = np.mean(current_field_01 == np.flipud(current_field_01))
-            
-            # 3. Aplicar reglas de decisión jerárquicas con memoria de recomendaciones previas
-            
-            # Verificar si hay una recomendación previa y si sigue siendo válida
-            use_previous_recommendation = False
-            if self.last_recommendation and self.consecutive_cycles < 3:
-                # Verificar si la recomendación previa sigue siendo relevante
-                if (self.last_recommendation == 'Reorganización Local con Memoria' and 
-                    0.5 <= global_entropy <= 1.0 and 
-                    neutral_ratio > 0.2):
-                    use_previous_recommendation = True
-                elif (self.last_recommendation == 'Inyección de Ruido' and 
-                      global_entropy < 0.5 and 
-                      neutral_ratio > 0.7):
-                    use_previous_recommendation = True
-            
-            # Si no usamos la recomendación previa, determinar nueva acción
-            if not use_previous_recommendation:
-                self.consecutive_cycles = 0
-                
-                # 1. Verificar si hay sobrecarga informacional
-                if (global_entropy > 1.0 or (neutral_ratio < 0.1 and global_entropy > 0.8)) and self.consecutive_inhibitions < 1:
-                    self.last_global_decision = 'inhibir'
-                    cycle_summary['metamodule_decision'] = 'inhibir'
-                    self._log(f"Metamodulo: Sobrecarga detectada (E={global_entropy:.3f}, N={neutral_ratio:.1%}). Aplicando suavizado global.")
-                    final_field_01 = ndi.gaussian_filter(current_field_01, sigma=2.0)
-                    applied_attractors_names = ['Suavizado Global']
-                    self.last_recommendation = 'Reorganización Local con Memoria'
-                    self.consecutive_inhibitions += 1
-                    self.last_action = 'inhibir'
-                elif self.consecutive_inhibitions >= 1:
-                    # Forzar cambio después de un ciclo de inhibición
-                    self._log("Metamodulo: Evitando ciclos consecutivos de inhibición. Aplicando reorganización local.")
-                    final_field_01 = self.core_nucleus.reorganize_field()
-                    applied_attractors_names = ['Reorganización Local Forzada']
-                    self.last_recommendation = 'Reorganización Local con Memoria'
-                    self.consecutive_inhibitions = 0
-                    self.last_global_decision = 'act'
-                    cycle_summary['metamodule_decision'] = 'act'
-                    self.last_action = 'reorganizar'
-                
-                # 2. Verificar si el campo está muerto
-                elif global_entropy < 0.05 and symmetry > 0.9:
-                    self.last_global_decision = 'activar'
-                    cycle_summary['metamodule_decision'] = 'activar'
-                    self._log(f"Metamodulo: Campo muerto detectado (E={global_entropy:.3f}, S={symmetry:.2f}). Inyectando ruido.")
-                    noise = np.random.normal(loc=0.5, scale=0.3, size=current_field_01.shape)
-                    final_field_01 = np.clip(current_field_01 + noise * 0.5, 0, 1)
-                    applied_attractors_names = ['Inyección de Ruido']
-                    self.last_recommendation = 'Reorganización Local con Memoria'
-                
-                # 3. Verificar si hay baja simetría
-                elif symmetry < 0.5 and global_entropy > 0.3:
-                    self.last_global_decision = 'reorganizar'
-                    cycle_summary['metamodule_decision'] = 'reorganizar'
-                    self._log(f"Metamodulo: Baja simetría detectada (S={symmetry:.2f}). Aplicando reorganización global.")
-                    temp_field = ndi.median_filter(current_field_01, size=3)
-                    final_field_01 = ndi.gaussian_filter(temp_field, sigma=0.5)
-                    applied_attractors_names = ['Reorganización Global']
-                    self.last_recommendation = 'Reorganización Local con Memoria'
-                
-                # 4. Estado normal - aplicar balance energético
-                else:
-                    # Si no hay celdas activas, forzar una activación mínima
-                    if active_ratio == 0 and neutral_ratio > 0:
-                        self._log("Metamodulo: Sin celdas activas. Aplicando pulso mínimo de activación.")
-                        neutral_mask = (ternary_field == 0)
-                        neutral_indices = np.argwhere(neutral_mask)
-                        np.random.shuffle(neutral_indices)
-                        # Activar entre 0.5% y 1% de las celdas neutras
-                        min_activation = max(1, int(neutral_indices.shape[0] * 0.005))
-                        max_activation = max(1, int(neutral_indices.shape[0] * 0.01))
-                        num_to_activate = np.random.randint(min_activation, max_activation + 1)
-                        
-                        final_field_01 = current_field_01.copy()
-                        for idx in neutral_indices[:num_to_activate]:
-                            final_field_01[tuple(idx)] = 1.0  # Activar celdas seleccionadas
-                        
-                        self.last_global_decision = 'activar_min'
-                        cycle_summary['metamodule_decision'] = 'activar_min'
-                        applied_attractors_names = ['Pulso Mínimo de Activación']
-                        self.last_recommendation = 'Reorganización Local con Memoria'
-                        self.last_action = 'activar_min'
-                        self._log(f"Metamodulo: Activadas {num_to_activate} celdas inactivas ({(num_to_activate/total_cells*100):.2f}% del total).")
-                    
-                    # Balance energético: si muchas inhibidas y neutras, activar algunas
-                    elif inhibited_ratio > 0.6 and neutral_ratio > 0.3 and active_ratio < 0.1:
-                        self._log(f"Metamodulo: Aplicando pulso de activación (I={inhibited_ratio:.1%}, N={neutral_ratio:.1%}).")
-                        # Seleccionar aleatoriamente un 10% de las celdas neutras para activar
-                        neutral_mask = (ternary_field == 0)
-                        neutral_indices = np.argwhere(neutral_mask)
-                        np.random.shuffle(neutral_indices)
-                        num_to_activate = int(neutral_indices.shape[0] * 0.1)
-                        
-                        final_field_01 = current_field_01.copy()
-                        for idx in neutral_indices[:num_to_activate]:
-                            final_field_01[tuple(idx)] = 1.0  # Activar celdas seleccionadas
-                        
-                        self.last_global_decision = 'balancear'
-                        cycle_summary['metamodule_decision'] = 'balancear'
-                        applied_attractors_names = ['Pulso de Activación']
-                        self.last_recommendation = 'Reorganización Local con Memoria'
-                    else:
-                        # Estado normal - reorganización local con memoria
-                        self.last_global_decision = 'act'
-                        cycle_summary['metamodule_decision'] = 'act'
-                        self._log(f"Metamodulo: Estado normal (E={global_entropy:.3f}, S={symmetry:.2f}, A/I/N={active_ratio:.1%}/{inhibited_ratio:.1%}/{neutral_ratio:.1%}).")
-                        final_field_01 = self.core_nucleus.reorganize_field()
-                        applied_attractors_names = ['Reorganización Local con Memoria']
-                        self.last_recommendation = 'Reorganización Local con Memoria'
-            else:
-                # Usar la recomendación del ciclo anterior si es válida
-                self.consecutive_cycles += 1
-                self._log(f"Metamodulo: Continuando con recomendación previa: {self.last_recommendation} (ciclo {self.consecutive_cycles})")
-                
-                if self.last_recommendation == 'Reorganización Local con Memoria':
-                    self.last_global_decision = 'act'
-                    cycle_summary['metamodule_decision'] = 'act'
-                    final_field_01 = self.core_nucleus.reorganize_field()
-                    applied_attractors_names = ['Reorganización Local con Memoria']
-                    self.last_action = 'reorganizar'
-                    self._log("Metamodulo: Aplicando Reorganización Local con Memoria según recomendación previa.")
-                
-                # Actualizar recomendación para el próximo ciclo
-                if self.consecutive_cycles >= 2:
-                    self._log("Metamodulo: Límite de ciclos con la misma recomendación alcanzado. Reiniciando recomendación.")
-                    self.last_recommendation = None
-                    self.consecutive_cycles = 0
-            
-            # Registrar atractores aplicados y limpiar contador de inhibiciones si no se está inhibiendo
-            if self.last_global_decision != 'inhibir':
-                self.consecutive_inhibitions = 0
-            cycle_summary['applied_attractors'].extend(applied_attractors_names)
-            
-
-            # --- Recopilar métricas e interpretación después de la decisión ---
-            self.core_nucleus.receive_field(final_field_01) # Asegurarse que el CoreNucleus tiene el campo final
-            
-            final_metrics_01 = self.core_nucleus.get_metrics()
-            final_entropy = final_metrics_01['entropía']
-            final_variance = final_metrics_01['varianza']
-            final_maximo = final_metrics_01['máximo']
-            entropy_change_pct = (final_entropy - global_entropy) / global_entropy * 100 if global_entropy != 0 else 0.0
-            
-            # Actualizar métricas para el próximo ciclo
-            self.last_metrics = {
-                'entropy': final_entropy,
-                'symmetry': symmetry,
-                'active_ratio': active_ratio,
-                'inhibited_ratio': inhibited_ratio,
-                'neutral_ratio': neutral_ratio
-            }
-            
-            # --- Mapear campo [0,1] a ternario [-1,0,1] para IA_Interpreter ---
-            ternary_field_for_interpretation = self._map_01_to_ternary_for_metrics(final_field_01)
-            active_cells = np.sum(ternary_field_for_interpretation == 1)
-            inhibited_cells = np.sum(ternary_field_for_interpretation == -1)
-            neutral_cells = np.sum(ternary_field_for_interpretation == 0)
-            total_cells = ternary_field_for_interpretation.size
-
-            active_ratio = active_cells / total_cells
-            inhibited_ratio = inhibited_cells / total_cells
-            neutral_ratio = neutral_cells / total_cells
-
-            # Asegurar que get_entropy_gradient exista en CoreNucleus
-            entropy_gradient_mean = np.mean(self.core_nucleus.get_entropy_gradient()) if hasattr(self.core_nucleus, 'get_entropy_gradient') else 0.0
-            symmetry = np.mean(final_field_01 == np.fliplr(final_field_01)) # Simetría sobre el campo [0,1]
-
-            reorganized_metrics = { 
-                'entropía': final_entropy,
-                'varianza': final_variance,
-                'máximo': final_maximo,
-                'entropy_change_pct': entropy_change_pct, 
-                'entropy_gradient': entropy_gradient_mean, 
-                'symmetry': symmetry,
-                'active_cells': active_cells,
-                'inhibited_cells': inhibited_cells,
-                'neutral_cells': neutral_cells,
-                'active_ratio': active_ratio,
-                'inhibited_ratio': inhibited_ratio,
-                'neutral_ratio': neutral_ratio,
-                'decision': self.last_global_decision, 
-                'applied_attractors': applied_attractors_names 
-            }
-            cycle_summary['reorganized_field_metrics'] = reorganized_metrics 
-
-            log_message_metrics = (
-                f"Entropía final: {reorganized_metrics.get('entropía'):.3f} (Δ{reorganized_metrics.get('entropy_change_pct'):.1f}%), "
-                f"Varianza: {reorganized_metrics.get('varianza'):.3f}, "
-                f"Patrón: {active_cells}A/{inhibited_cells}I/{neutral_cells}N"
-            )
-            self._log(f"Núcleo: {log_message_metrics}")
-
-            interpretacion_ia = interpretar_metrica(reorganized_metrics)
-            cycle_summary['ia_interpretation'] = interpretacion_ia 
-            self._log(f"Interpretación IA: {interpretacion_ia}")
-
-
-            # 5. Módulo de Acción: Generar salida
-            action_output = self.action_module.generate_output(
-                final_field_01, # Pasar el campo [0,1]
-                output_type='text',
-                message=f"Campo procesado en ciclo {self.current_cycle}"
-            )
-            cycle_summary['action_output'] = action_output
-            self._log(f"Acción: Salida generada (tipo texto).")
-
-            # 6. Módulo de Acción (Feedback): Obtener estadísticas
-            feedback_stats = self.action_module.get_feedback_stats()
-            cycle_summary['action_feedback_stats'] = feedback_stats
-            self._log(f"Acción: Estadísticas de feedback: {feedback_stats['success_rate']:.2f} éxito.")
-            
-
-        except Exception as e:
-            self._log(f"Error durante el ciclo: {e}", level='ERROR')
-            cycle_summary['error'] = str(e)
-            self.last_global_decision = 'error'
-
-        return cycle_summary
+        print(log_entry)
 
     def run_dig_system(self, input_sources: List[Tuple[Any, str]], max_cycles: Optional[int] = None) -> None:
-        """
-        Ejecuta el sistema DIG a través de múltiples ciclos.
-
-        Args:
-            input_sources: Lista de tuplas (raw_input, input_type) para cada ciclo.
-            max_cycles: Número máximo de ciclos a ejecutar.
-        """
         if not input_sources:
             self._log("No se proporcionaron fuentes de entrada para la ejecución.", level='WARNING')
             return
@@ -405,34 +311,116 @@ class Metamodulo:
         num_inputs = len(input_sources)
         
         for i in range(max_cycles if max_cycles else num_inputs):
-            raw_input, input_type = input_sources[i % num_inputs] # Cicla a través de las entradas
+            raw_input, input_type = input_sources[i % num_inputs]
             self._log(f"\n--- Ejecutando ciclo {self.current_cycle + 1} con entrada '{input_type}' ---")
             cycle_result = self.process_cycle(raw_input, input_type)
             
             if cycle_result.get('error'):
-                self._log(f"Ejecución detenida debido a error en ciclo {self.current_cycle}.", level='ERROR')
+                self._log(f"Ejecución detenida debido a error en ciclo {self.current_cycle}. Error: {cycle_result.get('error')}", level='ERROR')
                 break
 
         self._log("Ejecución del sistema DIG finalizada.")
+
+    def process_cycle(self, raw_input: Any, input_type: str) -> Dict[str, Any]:
+        try:
+            field_input = self.sensorium.process_input(raw_input, input_type)
+            self.core_nucleus.receive_field(field_input)
+            metrics = self.core_nucleus.get_metrics()
+            self._log(f"Métricas del campo: {metrics}")
+
+            decision = interpretar_metrica(metrics)
+            self._log(f"El sistema ha tomado la decisión: '{decision}'")
+            
+            if decision in ["caotico", "equilibrado"]:
+                atractor = self.memoria.find_closest_attractor(field_input)
+                if atractor is not None:
+                    self.action_module.apply_attractor(atractor)
+                    reorganized_field = self.core_nucleus.reorganize_field(applied_attractors=[atractor])
+                    self.core_nucleus.receive_field(reorganized_field)
+                else:
+                    self._log("No se encontró un atractor cercano. El campo no se reorganizó.", level='WARNING')
+
+            self.evolution_processor.evolve_memory()
+            self.memoria.save()
+            
+            self.current_cycle += 1
+            
+            # Simulación de un resumen de IA para la UI
+            ia_interpretation = f"""
+✅ ESTADO: EQUILIBRIO DINÁMICO: El sistema mantiene un balance saludable entre orden y actividad.
+
+📊 MÉTRICAS DETALLADAS:
+- Entropía: {metrics.get('entropia', 0.0):.4f}
+- Varianza: {metrics.get('varianza', 0.0):.4f}
+- Simetría: N/A
+- Composición: N/A
+- Ratios: N/A
+
+🔍 ANÁLISIS DE COMPOSICIÓN:
+
+🎯 DECISIÓN DEL SISTEMA:
+- Decisión actual: {decision.upper()}
+- Atractores aplicados: N/A
+
+💡 RECOMENDACIÓN: Se recomienda continuar con REORGANIZACIÓN LOCAL CON MEMORIA.
+
+📌 RESUMEN EJECUTIVO:
+Estado: EQUILIBRIO DINÁMICO
+Entropía: ALTA
+Simetría: BAJA
+Balance: NEUTRO
+            """.strip()
+
+            cycle_summary = {
+                'cycle': self.current_cycle,
+                'input_type': input_type,
+                'reorganized_field_metrics': metrics,
+                'metamodule_decision': decision,
+                'ia_interpretation': ia_interpretation,
+                'full_log': "\n".join(self.log_history)
+            }
+            
+            self.message_queue.put(cycle_summary)
+            
+            return {'status': 'success'}
+
+        except Exception as e:
+            self._log(f"Error durante el ciclo de procesamiento: {e}", level='ERROR')
+            # En caso de un error, todavía enviamos un mensaje a la UI
+            self.message_queue.put({'status': 'error', 'error': str(e), 'full_log': "\n".join(self.log_history)})
+            return {'status': 'error', 'error': str(e)}
 
 # --- Bloque de Ejecución Principal ---
 if __name__ == "__main__":
     print("Iniciando la ejecución del Metamodulo principal...")
     
+    # Cola para comunicación entre hilos
+    message_queue = Queue()
+    
     # Crear una instancia del Metamodulo
-    metamodulo_instance = Metamodulo()
+    metamodulo_instance = Metamodulo(message_queue=message_queue)
 
     # Preparar algunas entradas de ejemplo
     example_inputs = [
-        ("Este es un texto de prueba para el sistema DIG. Con aaarmonía y eeeequilibrio.", "text"),
+        ("Este es un texto de prueba para el sistema DIG.", "text"),
         ("Otro texto con datos repetidos, bbb y ccc.", "text"),
         ("Un campo mas equilibrado.", "text"),
+        ("Datos caoticos para el test de entropia.", "text"),
+        ("Una entrada mas controlada, con orden.", "text"),
     ]
 
-    # Ejecutar el sistema DIG por algunos ciclos
-    metamodulo_instance.run_dig_system(input_sources=example_inputs, max_cycles=5) 
+    # Crear e iniciar el visualizador en el hilo principal
+    visualizer_app = Visualizador(message_queue)
     
-    print("\nEjecución del Metamodulo principal finalizada.")
+    # Ejecutar el sistema DIG en un hilo separado
+    dig_thread = threading.Thread(target=metamodulo_instance.run_dig_system, 
+                                  args=(example_inputs, 5), 
+                                  daemon=True)
+    dig_thread.start()
+
+    # Iniciar el bucle de la interfaz gráfica
+    visualizer_app.mainloop()
+
 
 
 

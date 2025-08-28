@@ -47,33 +47,95 @@ class CoreNucleus:
         Calcula la entropía del campo informacional.
         Asume que los valores del campo están en [0, 1].
         """
-        # Discretizar el campo en un número razonable de bins para calcular las probabilidades
-        num_bins = 10 # Por ejemplo, 10 bins para valores de 0 a 1
-        counts, _ = np.histogram(self.field, bins=num_bins, range=(0, 1))
-        
-        # Calcular las probabilidades para cada bin
-        total_elements = counts.sum()
-        if total_elements == 0:
-            return 0.0 # Campo vacío o uniforme, entropía 0
+        try:
+            # Asegurarse de que el campo es un array de NumPy y tiene datos
+            if not isinstance(self.field, np.ndarray) or self.field.size == 0:
+                print(f"[DEBUG] Campo inválido para cálculo de entropía: {type(self.field)}, tamaño: {getattr(self.field, 'size', 0)}")
+                return 0.0
+                
+            # Asegurarse de que el campo es 2D
+            if len(self.field.shape) != 2:
+                print(f"[DEBUG] El campo debe ser 2D. Forma actual: {self.field.shape}")
+                return 0.0
+                
+            # Aplanar el campo para el cálculo del histograma
+            flat_field = self.field.flatten()
             
-        probabilities = counts / total_elements
-        
-        # Eliminar las probabilidades cero para evitar log(0)
-        probabilities = probabilities[probabilities > 0]
-        
-        # Calcular la entropía de Shannon
-        self.entropy = -np.sum(probabilities * np.log2(probabilities))
-        return float(self.entropy)
+            # Verificar que hay valores para procesar
+            if flat_field.size == 0:
+                print("[DEBUG] No hay valores en el campo para calcular entropía")
+                return 0.0
+                
+            # Discretizar el campo en bins
+            num_bins = 10
+            try:
+                counts, _ = np.histogram(flat_field, bins=num_bins, range=(0, 1))
+            except Exception as e:
+                print(f"[DEBUG] Error en np.histogram: {e}")
+                print(f"[DEBUG] Valores únicos: {np.unique(flat_field)}")
+                print(f"[DEBUG] Rango de valores: {np.min(flat_field)} - {np.max(flat_field)}")
+                return 0.0
+            
+            # Calcular las probabilidades para cada bin
+            total_elements = counts.sum()
+            if total_elements == 0:
+                return 0.0  # Campo vacío o uniforme, entropía 0
+                
+            probabilities = counts / total_elements
+            
+            # Eliminar las probabilidades cero para evitar log(0)
+            probabilities = probabilities[probabilities > 0]
+            
+            if probabilities.size == 0:
+                return 0.0
+                
+            # Calcular la entropía de Shannon
+            self.entropy = -np.sum(probabilities * np.log2(probabilities + 1e-10))  # Pequeño epsilon para evitar log(0)
+            return float(self.entropy)
+            
+        except Exception as e:
+            print(f"[ERROR] Error en calculate_entropy: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return 0.0
 
     def calculate_variance(self) -> float:
-        """Calcula la varianza del campo informacional."""
-        self.varianza = np.var(self.field)
-        return float(self.varianza)
+        """
+        Calcula la varianza del campo informacional.
+        
+        Returns:
+            float: Varianza del campo o 0.0 si hay un error.
+        """
+        try:
+            if not isinstance(self.field, np.ndarray) or self.field.size == 0:
+                print("[DEBUG] Campo inválido para cálculo de varianza")
+                return 0.0
+                
+            self.varianza = np.var(self.field)
+            return float(self.varanza)
+            
+        except Exception as e:
+            print(f"[ERROR] Error en calculate_variance: {str(e)}")
+            return 0.0
 
     def calculate_max(self) -> float:
-        """Calcula el valor máximo del campo informacional."""
-        self.max_val = np.max(self.field)
-        return float(self.max_val)
+        """
+        Calcula el valor máximo del campo informacional.
+        
+        Returns:
+            float: Valor máximo del campo o 0.0 si hay un error.
+        """
+        try:
+            if not isinstance(self.field, np.ndarray) or self.field.size == 0:
+                print("[DEBUG] Campo inválido para cálculo de máximo")
+                return 0.0
+                
+            self.max_val = np.max(self.field)
+            return float(self.max_val)
+            
+        except Exception as e:
+            print(f"[ERROR] Error en calculate_max: {str(e)}")
+            return 0.0
 
     def reorganize_field(self, applied_attractors: List[str] = None) -> np.ndarray:
         """
