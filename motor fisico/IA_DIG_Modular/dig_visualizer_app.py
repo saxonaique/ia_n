@@ -1,34 +1,165 @@
+# -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import ttk
-from typing import Dict, Any
 import numpy as np
-
-# AÑADIDO: Importación del sistema y sus módulos desde el directorio principal.
-# Esto asegura que la aplicación pueda encontrar los módulos necesarios.
-import sys
+import scipy.ndimage as ndi
+from typing import Optional, Tuple, Dict, Any, List
+from collections import deque
+import json
+import time
 import os
-# Corrección de la ruta de importación para que sea más robusta
-script_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(script_dir)
-grandparent_dir = os.path.dirname(parent_dir)
-sys.path.insert(0, grandparent_dir)
+import sys
 
-
-from metamodulo import Metamodulo
-from core_nucleus import CoreNucleus
-from memory_module import MemoryModule
-from sensor_module import SensorModule
-from action_module import ModuloAccion
-from ia_interpreter import interpretar_metrica
-
-# CLASE METAMODULO CORREGIDA
-class Metamodulo(Metamodulo):
+# --- Módulo: SensorModule (Sensorium Informacional) ---
+class SensorModule:
+    """
+    Sensorium Informacional: Módulo de percepción de la IA DIG
+    
+    Responsable de la captura y transformación de datos brutos en el campo informacional [0, 1].
+    """
     def __init__(self, config: Dict[str, Any] = None):
-        super().__init__(config)
-        self.initialize_modules()
+        self.config = config or {
+            'text': {
+                'target_field_size': (64, 64),
+            }
+        }
+        self.field_shape = self.config['text']['target_field_size']
+    
+    def process_input(self, raw_input: Any, input_type: str) -> np.ndarray:
+        """
+        Procesa una entrada cruda (solo texto por ahora) y la convierte en un campo numérico.
+        """
+        print(f"[SensorModule] Procesando entrada de tipo: '{input_type}'")
+        if input_type == 'text':
+            # Una forma simple de generar un campo a partir de un string
+            # Usar la longitud del texto para un valor inicial
+            value = len(raw_input) / 100.0
+            field = np.full(self.field_shape, value, dtype=np.float32)
+            return field
+        else:
+            raise ValueError("Tipo de entrada no soportado.")
 
+# --- Módulo: CoreNucleus (Núcleo Entrópico) ---
+class CoreNucleus:
+    """
+    Núcleo Entrópico: Módulo central de procesamiento de la IA DIG
+    
+    Responsable del análisis de entropía y reorganización del campo informacional
+    hacia estados de equilibrio utilizando un campo de valores en [0, 1].
+    """
+    def __init__(self, field_shape: Tuple[int, int] = (64, 64)):
+        self.field_shape = field_shape
+        self.field = np.zeros(field_shape, dtype=np.float32)
+        self.entropy = 0.0
+        self.varianza = 0.0
+        self.max_val = 0.0
+        self.log_history = []
+        print("[CoreNucleus] [INFO] CoreNucleus inicializado.")
+
+    def receive_field(self, field: np.ndarray) -> None:
+        if not isinstance(field, np.ndarray):
+            raise ValueError("El campo debe ser un array de NumPy")
+        if field.shape != self.field_shape:
+            zoom_factors = [target_size / current_size for target_size, current_size in zip(self.field_shape, field.shape)]
+            field = ndi.zoom(field, zoom_factors, order=1)
+        field = np.clip(field, 0, 1)
+        self.field = field
+
+    def reorganize_field(self) -> np.ndarray:
+        if self.field is None or self.field.size == 0:
+            return np.zeros(self.field_shape)
+        initial_field_for_reorg = self.field.copy()
+        reorganized = ndi.gaussian_filter(self.field, sigma=1.0)
+        reorganized = np.where(reorganized > 0.5, reorganized + (reorganized - 0.5) * 0.5, reorganized + (reorganized - 0.5) * 0.5)
+        reorganized = np.clip(reorganized, 0, 1)
+        if np.array_equal(reorganized, initial_field_for_reorg):
+            self.log_history.append(f"[Núcleo] El campo no cambió significativamente tras la reorganización. Posible estancamiento.")
+            print(f"[Núcleo] El campo no cambió significativamente tras la reorganización. Posible estancamiento.")
+        self.field = reorganized
+        return self.field
+    
+    def get_entropy_gradient(self) -> np.ndarray:
+        if self.field is None or self.field.size == 0:
+            return np.zeros(self.field_shape)
+        grad_y, grad_x = np.gradient(self.field)
+        return np.sqrt(grad_x**2 + grad_y**2)
+
+    def calculate_entropy(self) -> float:
+        if self.field is None or self.field.size == 0:
+            return 0.0
+        p = np.clip(self.field, 1e-9, 1 - 1e-9)
+        entropy = -np.sum(p * np.log2(p) + (1 - p) * np.log2(1 - p))
+        return entropy
+
+    def calculate_variance(self) -> float:
+        if self.field is None or self.field.size == 0:
+            return 0.0
+        return float(np.var(self.field))
+
+    def calculate_max(self) -> float:
+        if self.field is None or self.field.size == 0:
+            return 0.0
+        return float(np.max(self.field))
+
+    def get_metrics(self) -> Dict[str, Any]:
+        entropy_val = self.calculate_entropy()
+        variance_val = self.calculate_variance()
+        max_val = self.calculate_max()
+
+        return {
+            "entropía": entropy_val,
+            "varianza": variance_val,
+            "máximo": max_val
+        }
+
+    def apply_attractor(self, attractor_field: np.ndarray) -> None:
+        if self.field is not None and attractor_field is not None and self.field.shape == attractor_field.shape:
+            self.field = (self.field + attractor_field) / 2.0
+            self.field = np.clip(self.field, 0, 1)
+
+# --- Módulo: MemoryModule (Memoria de Atractores) ---
+class MemoryModule:
+    """
+    Simulación de un módulo de memoria.
+    """
+    def __init__(self):
+        # Esta es solo una simulación, la lógica real es más compleja
+        self.attractors = {}
+    
+    def find_similar(self, field: np.ndarray) -> List:
+        return []
+
+# --- Módulo: ActionModule (Módulo de Acción) ---
+class ModuloAccion:
+    """
+    Simulación de un módulo de acción.
+    """
+    def __init__(self):
+        pass
+
+    def take_action(self, field: np.ndarray, decision: Dict):
+        print(f"[ActionModule] Tomando acción basada en la decisión: {decision.get('decision_type', 'N/A')}")
+
+# --- Módulo: MetaLayer (Metamódulo) ---
+class Metamodulo:
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {
+            'entropy_window': 10,
+            'decision_thresholds': {
+                'high_entropy': 0.8,
+                'low_entropy': 0.2,
+                'stability': 0.1,
+                'confidence': 0.7
+            }
+        }
+        self.entropy_history: deque[float] = deque(maxlen=self.config['entropy_window'])
+        self.decision_history: List[Dict[str, Any]] = []
+        self.state_history: List[Dict[str, Any]] = []
+        self.last_decision: Optional[Dict[str, Any]] = None
+        self.last_decision_time: float = time.time()
+        self.initialize_modules()
+        
     def initialize_modules(self):
-        """Inicializa todos los módulos del sistema DIG."""
         print("[Metamodulo] Inicializando submódulos...")
         self.sensor_module = SensorModule()
         self.core_nucleus = CoreNucleus()
@@ -37,78 +168,89 @@ class Metamodulo(Metamodulo):
         print("[Metamodulo] Submódulos inicializados correctamente.")
         
     def receive_input(self, raw_input: Any, input_type: str = 'text'):
-        """
-        Recibe una entrada y la procesa a través del sistema.
-        """
-        # 1. Procesamiento de entrada
-        field = self.sensor_module.process_input(raw_input, input_type)
-        
-        # 2. Envío del campo al núcleo
-        self.core_nucleus.receive_field(field)
+        try:
+            field = self.sensor_module.process_input(raw_input, input_type)
+            self.core_nucleus.receive_field(field)
+            print("[Metamodulo] Entrada procesada y enviada al núcleo.")
+        except Exception as e:
+            print(f"[Metamodulo] Error al procesar entrada: {e}", file=sys.stderr)
 
     def process_step(self) -> Dict[str, Any]:
-        """Ejecuta un único paso de procesamiento del sistema."""
-        # 1. El núcleo reorganiza el campo
-        self.core_nucleus.reorganize_field()
-        
-        # 2. El metamódulo obtiene métricas
-        metrics = self.core_nucleus.get_metrics()
-        
-        # 3. El metamódulo toma una decisión
-        decision = self.make_decision(metrics)
-        
-        # 4. El metamódulo le dice al núcleo que aplique los atractores
-        # Lógica simplificada: aplicar atractores basados en la decisión
-        if decision.get('decision_type') == 'exploit':
-            # Simular la consulta y aplicación de un atractor de la memoria
-            similar_attractors = self.memory_module.find_similar(self.core_nucleus.field)
-            if similar_attractors:
-                attractor = similar_attractors[0]
-                self.core_nucleus.apply_attractor(attractor.field)
+        try:
+            self.core_nucleus.reorganize_field()
+            metrics = self.core_nucleus.get_metrics()
+            decision = self.make_decision(metrics)
+            
+            if decision.get('decision_type') == 'exploit':
+                similar_attractors = self.memory_module.find_similar(self.core_nucleus.field)
+                if similar_attractors:
+                    attractor = similar_attractors[0]
+                    self.core_nucleus.apply_attractor(attractor.field)
+            
+            self.action_module.take_action(self.core_nucleus.field, decision)
+            
+            return {
+                'field': self.core_nucleus.field,
+                'metrics': metrics,
+                'decision': decision.get('reasoning', 'N/A')
+            }
+        except Exception as e:
+            print(f"[Metamodulo] Error en el paso de procesamiento: {e}", file=sys.stderr)
+            raise
 
-        # 5. El módulo de acción toma el campo y produce una salida (simulada)
-        self.action_module.take_action(self.core_nucleus.field, decision)
+    def make_decision(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        e = metrics.get("entropía", 0.0)
+        v = metrics.get("varianza", 0.0)
+        decision_type = "continue"
+        if e > self.config['decision_thresholds']['high_entropy']:
+            decision_type = "explore"
+        elif v < self.config['decision_thresholds']['low_entropy']:
+            decision_type = "reset"
         
-        # Devolver el estado actual para la visualización
-        return {
-            'field': self.core_nucleus.field,
-            'metrics': metrics,
-            'decision': decision.get('reasoning', 'N/A')
-        }
+        return {'decision_type': decision_type, 'reasoning': f"Decisión: {decision_type}"}
 
-# Asegúrate de que las otras clases necesarias estén importadas y disponibles
-class DIGVisualizerApp(tk.Tk):
-    """
-    Aplicación de visualización del sistema DIG.
+# --- Módulo: IA Interpreter ---
+def interpretar_metrica(m: Dict[str, Any]) -> str:
+    e = float(m.get("entropía", 0.0))
+    v = float(m.get("varianza", 0.0))
     
-    Proporciona una interfaz gráfica para interactuar con el sistema
-    y visualizar su estado interno.
-    """
+    estado_sistema = "Desconocido"
+    if e > 10.0:
+        estado_sistema = "Caótico"
+    elif e < 1.0:
+        estado_sistema = "Estable"
+    else:
+        estado_sistema = "Dinámico"
+
+    interpretacion = [
+        f"🔍 ESTADO ACTUAL:",
+        f"- Estado del sistema: {estado_sistema}",
+        f"- Entropía: {e:.3f}",
+        f"- Varianza: {v:.3f}",
+    ]
+    
+    return "\n".join(interpretacion)
+
+# --- Módulo: DIG Visualizer App ---
+class DIGVisualizerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Visualizador del Sistema DIG")
         self.geometry("1100x850")
         
-        # Inicializar el Metamodulo y sus dependencias
-        # Se inicializa la versión corregida de Metamodulo
         self.metamodulo = Metamodulo()
-        
         self.is_running = False
         self.current_step = 0
         
         self.setup_ui()
         
     def setup_ui(self):
-        """Configura los elementos de la interfaz gráfica."""
-        # --- Marco Principal ---
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- Sección de Canvas de Visualización ---
         self.canvas_frame = ttk.Frame(main_frame, relief="sunken", borderwidth=2)
         self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Crear un lienzo para dibujar el campo
         field_shape = self.metamodulo.core_nucleus.field_shape
         self.canvas_size = 500
         self.cell_size = self.canvas_size // max(field_shape)
@@ -121,11 +263,9 @@ class DIGVisualizerApp(tk.Tk):
                                      highlightthickness=0)
         self.field_canvas.pack(fill=tk.BOTH, expand=True)
         
-        # --- Sección de Controles y Métricas ---
         controls_frame = ttk.Frame(main_frame)
         controls_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
         
-        # Controles de entrada de texto
         ttk.Label(controls_frame, text="Entrada de Texto:", font=("Helvetica", 12, "bold")).pack(pady=(10, 5))
         self.text_input = tk.Text(controls_frame, height=5, width=40, font=("Courier", 10))
         self.text_input.pack(pady=5)
@@ -135,7 +275,6 @@ class DIGVisualizerApp(tk.Tk):
         
         ttk.Separator(controls_frame, orient="horizontal").pack(fill="x", pady=10)
         
-        # Controles de simulación
         self.step_button = ttk.Button(controls_frame, text="Siguiente Paso", command=self.run_single_step)
         self.step_button.pack(pady=5)
         
@@ -147,7 +286,6 @@ class DIGVisualizerApp(tk.Tk):
 
         ttk.Separator(controls_frame, orient="horizontal").pack(fill="x", pady=10)
 
-        # Marco para las métricas
         metrics_frame = ttk.Frame(controls_frame)
         metrics_frame.pack(pady=5, fill="x")
         ttk.Label(metrics_frame, text="Métricas del Campo:", font=("Helvetica", 12, "bold")).pack(pady=(0, 5))
@@ -160,7 +298,6 @@ class DIGVisualizerApp(tk.Tk):
         
         ttk.Separator(controls_frame, orient="horizontal").pack(fill="x", pady=10)
 
-        # Marco para la interpretación de la IA
         interpretation_frame = ttk.Frame(controls_frame)
         interpretation_frame.pack(pady=5, fill="x")
         ttk.Label(interpretation_frame, text="Interpretación de la IA:", font=("Helvetica", 12, "bold")).pack(pady=(0, 5))
@@ -168,16 +305,13 @@ class DIGVisualizerApp(tk.Tk):
         self.interpretation_text.pack()
 
     def update_field_canvas(self, field: np.ndarray):
-        """Dibuja el campo en el lienzo."""
         self.field_canvas.delete("all")
         rows, cols = field.shape
-        # Normalizar el campo para el color (asegurar que esté en el rango [0, 1])
         norm_field = np.clip(field, 0, 1)
 
         for y in range(rows):
             for x in range(cols):
                 val = norm_field[y, x]
-                # Convertir valor a color en una escala de grises
                 color_val = int(val * 255)
                 color = f'#{color_val:02x}{color_val:02x}{color_val:02x}'
                 
@@ -186,7 +320,6 @@ class DIGVisualizerApp(tk.Tk):
                 self.field_canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="")
 
     def update_metrics_display(self, metrics: Dict[str, Any], decision: str, interpretation_text: str):
-        """Actualiza las etiquetas de métricas e interpretación."""
         self.entropy_label.config(text=f"Entropía: {metrics.get('entropía', 'N/A'):.3f}")
         self.variance_label.config(text=f"Varianza: {metrics.get('varianza', 'N/A'):.3f}")
         self.max_label.config(text=f"Máximo: {metrics.get('máximo', 'N/A'):.3f}")
@@ -199,7 +332,6 @@ class DIGVisualizerApp(tk.Tk):
         self.status_label.config(text=f"Paso {self.current_step} | Decisión: {decision}")
         
     def process_text(self):
-        """Maneja el evento del botón de procesamiento de texto."""
         input_text = self.text_input.get("1.0", tk.END).strip()
         if not input_text:
             self.status_label.config(text="Estado: Escriba algo para procesar.")
@@ -208,13 +340,12 @@ class DIGVisualizerApp(tk.Tk):
         try:
             self.metamodulo.receive_input(input_text, 'text')
             self.status_label.config(text="Estado: Texto enviado al sistema. Listo para procesar.")
-            self.current_step = 0 # Reiniciar contador de pasos
+            self.current_step = 0
             self.update_field_canvas(self.metamodulo.core_nucleus.field)
         except Exception as e:
             self.status_label.config(text=f"Error al procesar: {e}")
 
     def run_single_step(self):
-        """Ejecuta un solo paso de simulación."""
         try:
             result = self.metamodulo.process_step()
             self.current_step += 1
@@ -225,15 +356,15 @@ class DIGVisualizerApp(tk.Tk):
             metrics = result.get('metrics', {})
             decision = result.get('decision', 'N/A')
             
-            # Obtener la interpretación completa del ia_interpreter
             interpretation_text = interpretar_metrica(metrics)
             
             self.update_metrics_display(metrics, decision, interpretation_text)
         except Exception as e:
             self.status_label.config(text=f"Error en el paso: {e}")
+            self.is_running = False
+            self.run_button.config(text="Ejecutar Simulación (Auto)")
 
     def toggle_simulation(self):
-        """Alterna entre correr y detener la simulación automática."""
         self.is_running = not self.is_running
         if self.is_running:
             self.run_button.config(text="Detener Simulación")
@@ -242,15 +373,16 @@ class DIGVisualizerApp(tk.Tk):
             self.run_button.config(text="Ejecutar Simulación (Auto)")
 
     def run_simulation_loop(self):
-        """Bucle de simulación automática."""
         if self.is_running:
             self.run_single_step()
-            # Llama a sí mismo de nuevo después de 100ms
             self.after(100, self.run_simulation_loop)
 
 # --- Bloque de Ejecución Principal ---
 if __name__ == "__main__":
-    print("Iniciando la aplicación de visualización del Sistema DIG...")
-    app = DIGVisualizerApp()
-    app.mainloop()
+    try:
+        print("Iniciando la aplicación de visualización del Sistema DIG...")
+        app = DIGVisualizerApp()
+        app.mainloop()
+    except Exception as e:
+        print(f"Error fatal al iniciar la aplicación: {e}", file=sys.stderr)
 

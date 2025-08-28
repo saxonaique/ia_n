@@ -93,17 +93,20 @@ class VisualizadorDIG(tk.Tk):
         # Obtener el texto actual del widget de entrada
         input_text_for_cycle = self.current_text_input
 
-        # Ejecutar un ciclo del Metamodulo
-        cycle_summary = self.metamodulo.process_cycle(raw_input=input_text_for_cycle, input_type="text")
+        # Procesar la entrada
+        self.metamodulo.receive_input(input_text_for_cycle, "text")
+        
+        # Ejecutar un paso del Metamodulo
+        cycle_summary = self.metamodulo.process_step()
 
         # --- DEBUG PRINTS START (Visualizador) ---
         print(f"[DEBUG Visualizador] Recibido cycle_summary completo: {cycle_summary}")
         # --- DEBUG PRINTS END (Visualizador) ---
 
         # Extraer datos del resumen del ciclo
-        final_field = self.metamodulo.core_nucleus.field # El campo final después del procesamiento
-        metamodule_decision = cycle_summary.get('metamodule_decision', 'N/A')
-        metrics = cycle_summary.get('reorganized_field_metrics', {})
+        final_field = cycle_summary.get('field', self.metamodulo.core_nucleus.field)
+        metamodule_decision = cycle_summary.get('decision', 'N/A')
+        metrics = cycle_summary.get('metrics', {})
         
         # --- DEBUG PRINTS START (Visualizador) ---
         print(f"[DEBUG Visualizador] Extraído metrics diccionario: {metrics}")
