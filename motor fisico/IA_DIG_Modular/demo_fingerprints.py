@@ -7,7 +7,7 @@ Este script demuestra cómo funciona el sistema de captura automática de huella
 import numpy as np
 import json
 import time
-from ia_dig_organismo import Metamodulo, FingerprintSystem
+from neo import Metamodulo, FingerprintSystem
 
 def demo_fingerprint_system():
     """Demuestra el sistema de huellas en acción."""

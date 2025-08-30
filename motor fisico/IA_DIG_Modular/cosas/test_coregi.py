@@ -2,7 +2,7 @@ import sys, os
 # 🔹 Añadimos la ruta al proyecto para que pueda encontrar ia_dig_organismo.py
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from ia_dig_organismo import CoreNucleus
+from neo import CoreNucleus
 
 
 def test_coreGI(iterations: int = 50):

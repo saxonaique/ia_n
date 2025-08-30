@@ -5,7 +5,7 @@ Este script demuestra cómo la IA aprende y reconoce patrones repetidos.
 """
 
 import time
-from ia_dig_organismo import Metamodulo
+from neo import Metamodulo
 
 def demo_learning_system():
     """Demuestra el sistema de aprendizaje en acción."""

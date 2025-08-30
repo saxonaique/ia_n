@@ -19,7 +19,7 @@ def test_interface():
     
     try:
         # Importar la aplicación
-        from ia_dig_organismo import DIGVisualizerApp
+        from neo import DIGVisualizerApp
         
         print("✅ Importación exitosa")
         
