@@ -2939,6 +2939,11 @@ class DIGVisualizerApp(tk.Tk):
 
 
     def run_single_step(self):
+        if self.metamodulo.current_cycle >= self.metamodulo.max_iterations:
+            self.stop_simulation()
+            self.status_label.config(text=f"🛑 Límite de {self.metamodulo.max_iterations} ciclos alcanzado.")
+            self.add_system_log(f"Simulación detenida: Límite de {self.metamodulo.max_iterations} ciclos alcanzado.")
+            return
         try:
             summary = self.metamodulo.process_step()
             self.update_display(summary)
