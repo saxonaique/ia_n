@@ -29,6 +29,204 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
     print("⚠️ Matplotlib no disponible. Los gráficos estarán deshabilitados.")
 
+#---------------------------------------------------------------------
+# --- Módulo de Memoria Evolutiva (NUEVO) ---
+#---------------------------------------------------------------------
+
+class Huella:
+    """
+    Representa la huella informacional de un único token (palabra) o una frase.
+    Contiene el campo 2D, métricas y asociaciones con otros tokens.
+    """
+    def __init__(self, token: str = "", contenido: Optional[np.ndarray] = None):
+        self.token = token
+        self.contenido = contenido if contenido is not None else np.array([])
+        
+        # Métricas de la huella
+        self.entropia: float = 0.0
+        self.varianza: float = 0.0
+        self.max_valor: float = 0.0
+        
+        # Red de conceptos
+        self.asociaciones: Dict[str, float] = {}  # {token_asociado: fuerza_asociacion}
+        
+        # Metadatos
+        self.timestamp: float = time.time()
+        self.frecuencia: int = 1
+
+    def __repr__(self):
+        return (f"Huella(Token: '{self.token}', Entropía: {self.entropia:.2f}, "
+                f"Asociaciones: {len(self.asociaciones)})")
+
+class MemoriaEvolutiva:
+    """
+    Gestiona una memoria de dos niveles (corto y largo plazo) para las huellas
+    de los tokens y construye una red de asociaciones entre ellos.
+    """
+    def __init__(self, sensor_module: 'SensorModule'):
+        self.sensor_module = sensor_module
+        
+        self.memoria_corto_plazo: List[Huella] = []
+        self.memoria_largo_plazo: List[Huella] = []
+        
+        # Parámetros de configuración
+        self.limite_corto_plazo: int = 50   # N1: Número de huellas únicas recientes
+        self.limite_largo_plazo: int = 200  # N2: Archivo histórico de huellas
+        
+        print("[MemoriaEvolutiva] INFO: Inicializada.")
+
+    def registrar_frase(self, frase: str):
+        """
+        Punto de entrada principal. Procesa una frase, genera huellas para cada
+        token, crea asociaciones y las registra en la memoria.
+        """
+        if not frase:
+            return
+            
+        tokens = frase.lower().split()
+        if not tokens:
+            return
+
+        print(f"\n[MemoriaEvolutiva] Registrando frase: '{frase}'")
+        
+        # 1. Generar huella para cada token
+        huellas_tokens = [self._generar_huella(token) for token in tokens]
+
+        # 2. Crear asociaciones entre tokens de la frase
+        for i, huella_i in enumerate(huellas_tokens):
+            for j, huella_j in enumerate(huellas_tokens):
+                if i == j:
+                    continue
+                # La fuerza se basa en la similitud y la distancia en la frase
+                similitud = self._calcular_similitud_contenido(huella_i.contenido, huella_j.contenido)
+                distancia = abs(i - j)
+                fuerza = similitud / (distancia + 0.5) # +0.5 para dar más peso
+                
+                # Añadir o fortalecer la asociación
+                huella_i.asociaciones[huella_j.token] = huella_i.asociaciones.get(huella_j.token, 0) + fuerza
+        
+        # 3. Registrar cada huella de token individual en la memoria
+        for huella in huellas_tokens:
+            self._registrar_huella_token(huella)
+        
+        print("[MemoriaEvolutiva] Frase procesada y asociaciones actualizadas.")
+
+    def _generar_huella(self, token: str) -> Huella:
+        """Pasa un token por el SensorModule para obtener su campo y crea una Huella."""
+        campo = self.sensor_module.process(token, 'text')
+        huella = Huella(token=token, contenido=campo)
+        self._calcular_metricas_huella(huella)
+        return huella
+
+    def _calcular_metricas_huella(self, huella: Huella):
+        """Calcula y asigna las métricas básicas a una huella."""
+        if huella.contenido.size == 0:
+            return
+        hist, _ = np.histogram(huella.contenido.flatten(), bins=10, range=(0, 1))
+        probs = hist / huella.contenido.size
+        probs = probs[probs > 0]
+        huella.entropia = -np.sum(probs * np.log2(probs + 1e-9))
+        huella.varianza = np.var(huella.contenido)
+        huella.max_valor = np.max(huella.contenido)
+
+    def _calcular_similitud_contenido(self, contenido1: np.ndarray, contenido2: np.ndarray) -> float:
+        """Calcula la similitud coseno entre dos campos 2D."""
+        if contenido1.size == 0 or contenido2.size == 0:
+            return 0.0
+        v1 = contenido1.flatten()
+        v2 = contenido2.flatten()
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return np.dot(v1, v2) / (norm1 * norm2)
+
+    def _registrar_huella_token(self, nueva_huella: Huella):
+        """
+        Registra una huella en la memoria, fusionándola si es similar a una existente
+        o añadiéndola como nueva. Gestiona el paso a memoria de largo plazo.
+        """
+        # Buscar una huella similar en la memoria a corto plazo
+        for huella_existente in self.memoria_corto_plazo:
+            if huella_existente.token == nueva_huella.token:
+                # Si encontramos el mismo token, lo actualizamos (fusionamos)
+                self._actualizar_huella(huella_existente, nueva_huella)
+                return
+
+        # Si no se encontró, es un token nuevo para la memoria reciente
+        self.memoria_corto_plazo.append(nueva_huella)
+        
+        # Control de tamaño de la memoria a corto plazo
+        if len(self.memoria_corto_plazo) > self.limite_corto_plazo:
+            # La huella más antigua se mueve a la memoria a largo plazo
+            huella_antigua = self.memoria_corto_plazo.pop(0)
+            self.memoria_largo_plazo.append(huella_antigua)
+            
+            # Control de tamaño de la memoria a largo plazo
+            if len(self.memoria_largo_plazo) > self.limite_largo_plazo:
+                self.memoria_largo_plazo.pop(0)
+
+    def _actualizar_huella(self, existente: Huella, nueva: Huella):
+        """
+        Fusiona una huella nueva con una existente, promediando sus contenidos
+        y combinando sus asociaciones.
+        """
+        total_frecuencia = existente.frecuencia + 1
+        existente.contenido = (existente.contenido * existente.frecuencia + nueva.contenido) / total_frecuencia
+        self._calcular_metricas_huella(existente)
+        for token, fuerza in nueva.asociaciones.items():
+            existente.asociaciones[token] = existente.asociaciones.get(token, 0) + fuerza
+        existente.frecuencia += 1
+        existente.timestamp = time.time()
+        self.memoria_corto_plazo.remove(existente)
+        self.memoria_corto_plazo.append(existente)
+
+    def encontrar_asociaciones(self, token: str, top_n: int = 5) -> Dict[str, float]:
+        """
+        Busca un token en la memoria y devuelve sus asociaciones más fuertes.
+        """
+        for huella in reversed(self.memoria_corto_plazo):
+            if huella.token == token:
+                sorted_asoc = sorted(huella.asociaciones.items(), key=lambda item: item[1], reverse=True)
+                return dict(sorted_asoc[:top_n])
+        for huella in reversed(self.memoria_largo_plazo):
+            if huella.token == token:
+                sorted_asoc = sorted(huella.asociaciones.items(), key=lambda item: item[1], reverse=True)
+                return dict(sorted_asoc[:top_n])
+        return {}
+    def generar_cadena_asociativa(self, token_inicial: str, longitud_maxima: int = 7) -> List[str]:
+        """
+        Genera una 'cadena de pensamiento' caminando por las asociaciones más fuertes.
+        """
+        token_inicial = token_inicial.lower()
+        
+        # Comprobar si el token inicial existe en la memoria
+        if not self.encontrar_asociaciones(token_inicial):
+            return [token_inicial, "(No se encontraron asociaciones para este token)"]
+
+        cadena = [token_inicial]
+        tokens_usados = {token_inicial}
+
+        for _ in range(longitud_maxima - 1):
+            token_actual = cadena[-1]
+            
+            # Buscamos las asociaciones más fuertes para el token actual
+            asociaciones = self.encontrar_asociaciones(token_actual, top_n=10)
+            if not asociaciones:
+                break # No hay más camino
+
+            siguiente_token_encontrado = False
+            for token_asociado, fuerza in asociaciones.items():
+                if token_asociado not in tokens_usados:
+                    cadena.append(token_asociado)
+                    tokens_usados.add(token_asociado)
+                    siguiente_token_encontrado = True
+                    break # Pasamos al siguiente eslabón de la cadena
+            
+            if not siguiente_token_encontrado:
+                break # No hay nuevos caminos que explorar desde este token
+
+        return cadena
 # --- Módulo 1: SensorModule (Sensorium Informacional Universal) ---
 class SensorModule:
     """
@@ -992,6 +1190,7 @@ class DIGVisualizerApp(tk.Tk):
         self.is_running = False
         self.cycle_delay = 200
         self.plugin_warning_shown = False # Para mostrar la advertencia de plugins solo una vez
+        self.memoria_evolutiva = MemoriaEvolutiva(self.metamodulo.sensor_module)
         
         ### SOLUCIÓN: Variables de estado para la entrada de datos activa
         # Esto asegura que las acciones de aprender/reconocer usen los datos correctos.
@@ -1109,10 +1308,79 @@ class DIGVisualizerApp(tk.Tk):
         self.config_tab = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(self.config_tab, text="⚙️ Configuración")
         self.setup_config_tab()
-        
+                # Pestaña 6: Memoria Evolutiva (NUEVA)
+        self.memoria_tab = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(self.memoria_tab, text="💡 Memoria Evolutiva")
+        self.setup_memoria_evolutiva_tab()
         # Barra de estado en la parte inferior
         self.setup_status_bar()
+    
+    def setup_memoria_evolutiva_tab(self, parent_tab=None):
+        """Configura la pestaña para interactuar con la Memoria Evolutiva."""
+        if parent_tab is None: parent_tab = self.memoria_tab # Para compatibilidad
 
+        main_frame = ttk.Frame(parent_tab)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(1, weight=1)
+        main_frame.grid_rowconfigure(1, weight=1)
+
+        # --- Panel de Entrada ---
+        input_frame = ttk.LabelFrame(main_frame, text="Registrar Frase en Memoria", padding=10)
+        input_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+
+        self.frase_input = ttk.Entry(input_frame, font=("Helvetica", 11))
+        self.frase_input.pack(side=tk.LEFT, fill="x", expand=True, ipady=5, padx=(0, 10))
+        
+        registrar_btn = ttk.Button(input_frame, text="Registrar y Aprender", style="Success.TButton", command=self._registrar_frase_action)
+        registrar_btn.pack(side=tk.RIGHT)
+
+        # --- Panel de Consulta ---
+        query_frame = ttk.LabelFrame(main_frame, text="Consultar Asociaciones de un Token", padding=10)
+        query_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        
+        ttk.Label(query_frame, text="Escribe una palabra para ver sus asociaciones:").pack(anchor="w", pady=(0, 5))
+        self.token_query_input = ttk.Entry(query_frame, font=("Helvetica", 10))
+        self.token_query_input.pack(fill="x", pady=(0, 10))
+        
+        query_btn = ttk.Button(query_frame, text="Buscar Asociaciones", style="Info.TButton", command=self._consultar_asociaciones_action)
+        query_btn.pack()
+
+        # --- Panel de Resultados ---
+        results_frame = ttk.LabelFrame(main_frame, text="Resultados de la Consulta", padding=10)
+        results_frame.grid(row=1, column=1, sticky="nsew", padx=5, pady=5)
+
+        self.results_text = tk.Text(results_frame, height=10, wrap=tk.WORD, state="disabled", font=("Consolas", 10), bg=self.colors['bg_secondary'], fg=self.colors['text_primary'])
+        self.results_text.pack(fill=tk.BOTH, expand=True)
+        
+    def _registrar_frase_action(self):
+        """Acción del botón para registrar una frase."""
+        frase = self.frase_input.get().strip()
+        if frase:
+            # Ejecutar en un hilo para no bloquear la GUI
+            threading.Thread(target=self.memoria_evolutiva.registrar_frase, args=(frase,), daemon=True).start()
+            self.frase_input.delete(0, tk.END)
+            messagebox.showinfo("Procesando", f"La frase '{frase}' se está procesando en segundo plano.")
+        else:
+            messagebox.showwarning("Entrada Vacía", "Por favor, escribe una frase para registrar.")
+
+    def _consultar_asociaciones_action(self):
+        """Acción del botón para consultar asociaciones."""
+        token = self.token_query_input.get().strip().lower()
+        if token:
+            asociaciones = self.memoria_evolutiva.encontrar_asociaciones(token)
+            self.results_text.config(state="normal")
+            self.results_text.delete("1.0", tk.END)
+            if asociaciones:
+                self.results_text.insert("1.0", f"Asociaciones más fuertes para '{token}':\n\n")
+                for asociado, fuerza in asociaciones.items():
+                    self.results_text.insert(tk.END, f"- {asociado} (Fuerza: {fuerza:.4f})\n")
+            else:
+                self.results_text.insert("1.0", f"No se encontraron asociaciones para el token '{token}'.")
+            self.results_text.config(state="disabled")
+        else:
+            messagebox.showwarning("Entrada Vacía", "Por favor, escribe un token para consultar.")
+    
     def setup_main_tab(self):
         """Configura la pestaña principal con el canvas y controles básicos."""
         # Frame principal con grid para mejor distribución
