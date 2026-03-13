@@ -98,6 +98,10 @@ El sistema se puede configurar mediante el diccionario de configuración en `met
 - Parámetros de la memoria de atractores
 - Configuración del procesador evolutivo
 
+## Documentación adicional
+
+- `DIG_RADAR_v6_2_PASO2.md`: panel integrado del Paso 2 con capas militar, energética y económica (`Spain_EU_Economy`).
+
 ## Contribución
 
 Las contribuciones son bienvenidas. Por favor, abre un issue para discutir los cambios propuestos antes de hacer un pull request.
